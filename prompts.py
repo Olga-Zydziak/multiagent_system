@@ -132,3 +132,20 @@ Zacznij działać, Analityku! Pokaż nam historię ukrytą w danych.
     - Czy widzisz możliwość ulepszenia któregoś z promptów, aby system działał bardziej niezawodnie lub efektywnie w przyszłości?
 5. **Rekomendacje do Samodoskonalenia:** Zaproponuj 1-3 konkretne zmiany w kodzie lub promptach, które usprawnią system.
 **Format Wyjściowy:** Zwięzły raport tekstowy."""
+    
+    
+class ArchitecturalRule(TypedDict):
+    id: str; description: str; check: Callable[[str], bool]; error_message: str
+
+ARCHITECTURAL_RULES: List[ArchitecturalRule] = [
+    {"id": "NO_MAIN_BLOCK", "description": "Żadnego bloku `if __name__ == '__main__':`.", "check": lambda code: bool(re.search(r'if\s+__name__\s*==\s*["\']__main__["\']\s*:', code)), "error_message": "Wykryto niedozwolony blok `if __name__ == '__main__':`."},
+    {"id": "NO_ARGPARSE", "description": "Żadnego `argparse` ani `sys.argv`.", "check": lambda code: bool(re.search(r'import\s+argparse', code)), "error_message": "Wykryto niedozwolony import modułu `argparse`."},
+    {"id": "SINGLE_FUNCTION_LOGIC", "description": "Cała logika musi być w funkcji `process_data(input_path: str, output_path: str)`.", "check": lambda code: "def process_data(input_path: str, output_path: str)" not in code, "error_message": "Brak wymaganej definicji funkcji `process_data(input_path: str, output_path: str)`."},
+    {"id": "ENDS_WITH_CALL", "description": "Skrypt musi kończyć się **dokładnie jedną linią** w formacie: `process_data(input_path, output_path)  # noqa: F821`. Komentarz `# noqa: F821` jest **obowiązkowy**.", "check": lambda code: not re.search(r'^\s*process_data\(input_path,\s*output_path\)\s*#\s*noqa:\s*F821\s*$', [line for line in code.strip().split('\n') if line.strip()][-1]), "error_message": "Skrypt nie kończy się wymaganym wywołaniem `process_data(input_path, output_path)  # noqa: F821`."},
+]
+
+class ArchitecturalRulesManager:
+    @staticmethod
+    def get_rules_as_string() -> str:
+        rules_text = "\n".join(f"        - {rule['description']}" for rule in ARCHITECTURAL_RULES)
+        return f"<ARCHITECTURAL_RULES>\n    **Krytyczne Wymagania Dotyczące Struktury Kodu:**\n{rules_text}\n</ARCHITECTURAL_RULES>"
