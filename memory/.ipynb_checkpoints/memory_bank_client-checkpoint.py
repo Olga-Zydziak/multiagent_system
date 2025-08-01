@@ -4,7 +4,7 @@ import pandas as pd
 from typing import Dict, List, Optional
 import vertexai
 from vertexai import agent_engines
-from memory_models import MemoryRecord
+from .memory_models import MemoryRecord
 
 
 class MemoryBankClient:

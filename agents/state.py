@@ -3,6 +3,7 @@ from memory.memory_bank_client import MemoryBankClient
 
 #Zmienne przekazywane do grafu LangChian
 class AgentWorkflowState(TypedDict):
+    config: Dict[str, Any]
     plan: str; input_path: str; output_path: str; report_output_path: str
     available_columns: List[str]; generated_code: str; generated_report_code: str
     correction_attempts: int; error_message: Optional[str]; failing_node: Optional[str]

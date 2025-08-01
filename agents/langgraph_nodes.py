@@ -1,3 +1,23 @@
+import os
+import io
+import sys
+import subprocess
+import tempfile
+import traceback
+import uuid
+import json
+import re
+from typing import TypedDict, List, Callable, Dict, Optional, Union, Any
+import pandas as pd
+from typing import TypedDict, List, Callable, Dict, Optional, Union, Any
+import langchain
+from langchain_google_vertexai import ChatVertexAI
+from langchain_anthropic import ChatAnthropic
+from .state import AgentWorkflowState
+from prompts import Langchain_Agents_prompts
+from tools.utils import *
+from prompts import ArchitecturalRule, ArchitecturalRulesManager,ARCHITECTURAL_RULES
+
 # --- Definicje węzłów LangGraph ---
 
 def schema_reader_node(state: AgentWorkflowState):
@@ -19,8 +39,11 @@ def schema_reader_node(state: AgentWorkflowState):
 def code_generator_node(state: AgentWorkflowState):
     print("---  WĘZEŁ: GENERATOR KODU ---")
     
+    
+    CODE_MODEL=state['config']['CODE_MODEL']
+    
     llm = ChatAnthropic(model_name=CODE_MODEL, temperature=0.0, max_tokens=2048)
-    prompt = PromptTemplates.code_generator(state['plan'], state['available_columns'])
+    prompt = Langchain_Agents_prompts.code_generator(state['plan'], state['available_columns'])
     response = llm.invoke(prompt).content
     code = extract_python_code(response)
     
@@ -103,12 +126,12 @@ def data_code_executor_node(state: AgentWorkflowState):
     
 def universal_debugger_node(state: AgentWorkflowState):
     print(f"--- WĘZEŁ: INTELIGENTNY DEBUGGER (Błąd w: {state.get('failing_node')}) ---")
-    
+    MAIN_AGENT=state['config']['MAIN_AGENT']
     # llm = ChatAnthropic(model_name=CODE_MODEL, temperature=0.0, max_tokens=2048)
     llm = ChatVertexAI(model_name=MAIN_AGENT,temperature=0.0, project=PROJECT_ID, location=LOCATION)
     tools = [propose_code_fix, request_package_installation]
     llm_with_tools = llm.bind_tools(tools)
-    prompt = PromptTemplates.tool_based_debugger()
+    prompt = Langchain_Agents_prompts.tool_based_debugger()
     error_context = f"Wadliwy Kod:\n```python\n{state['error_context_code']}\n```\n\nBłąd:\n```\n{state['error_message']}\n```"
     response = llm_with_tools.invoke(prompt + error_context)
     if not response.tool_calls:
@@ -124,6 +147,9 @@ def universal_debugger_node(state: AgentWorkflowState):
 def apply_code_fix_node(state: AgentWorkflowState):
     """Aplikuje poprawkę kodu zaproponowaną przez debuggera."""
     print("--- WĘZEŁ: APLIKOWANIE POPRAWKI KODU ---")
+    
+    CODE_MODEL=state['config']['CODE_MODEL']
+    
     analysis = state.get("debugger_analysis", "")
     corrected_code = state.get("tool_args", {}).get("corrected_code")
     
@@ -252,6 +278,9 @@ def reporting_agent_node(state: AgentWorkflowState):
     print("\n--- WĘZEŁ: AGENT RAPORTUJĄCY (ANALIZA DANYCH I GENEROWANIE KODU) ---")
     
     try:
+        
+        CODE_MODEL=state['config']['CODE_MODEL']
+        
         # --- NOWY KROK: Wczytanie i analiza danych ---
         print("  [INFO] Wczytywanie danych do analizy porównawczej...")
         df_original = pd.read_csv(state['input_path'])
@@ -414,6 +443,9 @@ def meta_auditor_node(state: AgentWorkflowState):
     
     # 2. Uruchom audytora (logika bez zmian)
     try:
+        
+        CRITIC_MODEL=state['config']['CRITIC_MODEL']
+        
         # ... (cała logika generowania raportu audytora, tak jak w oryginale)
         # Załóżmy, że wynikiem jest zmienna 'audit_report'
         final_report_content = "Brak raportu do analizy."
@@ -423,7 +455,7 @@ def meta_auditor_node(state: AgentWorkflowState):
         except Exception: pass
         
         llm = ChatAnthropic(model_name=CRITIC_MODEL, temperature=0.0, max_tokens=2048)
-        prompt = PromptTemplates.create_meta_auditor_prompt(
+        prompt = Langchain_Agents_prompts.create_meta_auditor_prompt(
             source_code=state['source_code'], autogen_conversation=state['autogen_log'],
             langgraph_log=state['langgraph_log'], final_code=state.get('generated_code', 'Brak kodu'),
             final_report=final_report_content

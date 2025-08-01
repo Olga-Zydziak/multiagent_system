@@ -1,0 +1,217 @@
+========================================
+### PEŁNY ZAPIS ROZMOWY AGENTÓW (FAZA PLANOWANIA) ###
+========================================
+
+--- Komunikat od: UserProxy ---
+Oto podgląd danych:
+
+Kolumny:
+['Transaction_ID', 'User_ID', 'Transaction_Amount', 'Transaction_Type', 'Timestamp', 'Account_Balance', 'Device_Type', 'Location', 'Merchant_Category', 'IP_Address_Flag', 'Previous_Fraudulent_Activity', 'Daily_Transaction_Count', 'Avg_Transaction_Amount_7d', 'Failed_Transaction_Count_7d', 'Card_Type', 'Card_Age', 'Transaction_Distance', 'Authentication_Method', 'Risk_Score', 'Is_Weekend', 'Fraud_Label']
+
+Pierwsze 5 wierszy:
+  Transaction_ID    User_ID  Transaction_Amount Transaction_Type            Timestamp  Account_Balance Device_Type  Location Merchant_Category  IP_Address_Flag  Previous_Fraudulent_Activity  Daily_Transaction_Count  Avg_Transaction_Amount_7d  Failed_Transaction_Count_7d   Card_Type  Card_Age  Transaction_Distance Authentication_Method  Risk_Score  Is_Weekend  Fraud_Label
+0      TXN_33553  USER_1834               39.79              POS  2023-08-14 19:30:00         93213.17      Laptop    Sydney            Travel                0                             0                        7                     437.63                            3        Amex        65                883.17             Biometric      0.8494           0            0
+1       TXN_9427  USER_7875                1.19    Bank Transfer  2023-06-07 04:01:00         75725.25      Mobile  New York          Clothing                0                             0                       13                     478.76                            4  Mastercard       186               2203.36              Password      0.0959           0            1
+2        TXN_199  USER_2734               28.96           Online  2023-06-20 15:25:00          1588.96      Tablet    Mumbai       Restaurants                0                             0                       14                      50.01                            4        Visa       226               1909.29             Biometric      0.8400           0            1
+3      TXN_12447  USER_2617              254.32   ATM Withdrawal  2023-12-07 00:31:00         76807.20      Tablet  New York          Clothing                0                             0                        8                     182.48                            4        Visa        76               1311.86                   OTP      0.7935           0            1
+4      TXN_39489  USER_2014               31.28              POS  2023-11-11 23:44:00         92354.66      Mobile    Mumbai       Electronics                0                             1                       14                     328.69                            4  Mastercard       140                966.98              Password      0.3819           1            1
+
+--- Komunikat od: TriggerAgent ---
+Dane są tabularyczne. Przekazuję do PlannerAgent w celu stworzenia planu analizy.
+
+--- Komunikat od: PlannerAgent ---
+Jako Architekt Planu, po zapoznaniu się ze strukturą i podglądem dostarczonych danych, przedstawiam szczegółowy plan ich przygotowania. Celem jest przekształcenie surowych danych w czysty, spójny i zoptymalizowany zbiór, gotowy do przeprowadzenia analizy eksploracyjnej oraz budowy modeli predykcyjnych (np. wykrywania oszustw).
+
+Oto proponowany, numerowany plan działania:
+
+***
+
+### **Plan Czyszczenia i Przygotowania Danych Transakcyjnych**
+
+**Cel:** Przygotowanie danych do analizy i modelowania klasyfikacyjnego w celu identyfikacji transakcji typu "fraud".
+
+**1. Wstępna Analiza i Weryfikacja Integralności Danych**
+*   **1.1. Wczytanie danych:** Załadowanie zbioru danych do struktury DataFrame.
+*   **1.2. Podstawowe informacje:** Użycie funkcji `.info()` w celu weryfikacji wstępnych typów danych i liczby niepustych wartości w każdej kolumnie. Pozwoli to na szybkie zidentyfikowanie kolumn z potencjalnymi brakami.
+*   **1.3. Statystyki opisowe:** Wygenerowanie statystyk opisowych za pomocą `.describe(include='all')` dla kolumn numerycznych (średnia, mediana, odchylenie standardowe, kwantyle) i kategorycznych (liczba unikalnych wartości, najczęstsza wartość).
+*   **1.4. Weryfikacja duplikatów:** Sprawdzenie, czy w kolumnie `Transaction_ID` istnieją zduplikowane wartości. Każda transakcja powinna być unikalna. W przypadku znalezienia duplikatów, należy je usunąć.
+
+**2. Obsługa Brakujących Wartości (Missing Values)**
+*   **2.1. Identyfikacja:** Dokładne zliczenie brakujących wartości (`NaN`, `None`) w każdej kolumnie.
+*   **2.2. Strategia imputacji:**
+    *   **Kolumny numeryczne (`Transaction_Amount`, `Account_Balance`, `Avg_Transaction_Amount_7d`, `Transaction_Distance`, `Risk_Score`, `Card_Age`):** W przypadku niewielkiej liczby braków (<5%), zastosowanie imputacji **medianą**. Mediana jest bardziej odporna na wartości odstające niż średnia, co jest kluczowe w danych finansowych.
+    *   **Kolumny kategoryczne (`Location`, `Merchant_Category`, `Device_Type`, `Card_Type`, `Authentication_Method`):** W przypadku braków, zastosowanie imputacji **modą** (najczęściej występującą wartością) lub utworzenie nowej kategorii `'Unknown'`.
+    *   **Kolumny o wysokim odsetku braków:** Jeśli jakakolwiek kolumna posiada > 60% brakujących wartości, zostanie ona usunięta, ponieważ jej imputacja mogłaby wprowadzić zbyt dużo szumu do modelu.
+
+**3. Weryfikacja i Konwersja Typów Danych**
+*   **3.1. Konwersja kolumny `Timestamp`:** Zmiana typu danych kolumny `Timestamp` z `object` (string) na `datetime`. Jest to kluczowe dla dalszej inżynierii cech.
+*   **3.2. Weryfikacja kolumn numerycznych:** Upewnienie się, że wszystkie kolumny, które powinny być numeryczne (np. `Transaction_Amount`, `Account_Balance`), mają odpowiedni typ (`float` lub `int`), a nie `object`.
+*   **3.3. Weryfikacja kolumn binarnych:** Sprawdzenie, czy kolumny binarne (`IP_Address_Flag`, `Previous_Fraudulent_Activity`, `Is_Weekend`, `Fraud_Label`) mają typ `int` (0/1).
+
+**4. Inżynieria Cech (Feature Engineering)**
+*   **4.1. Cechy oparte na dacie i czasie (z `Timestamp`):**
+    *   `Godzina_Transakcji`: Ekstrakcja godziny z `Timestamp`. Wzorce oszustw często zależą od pory dnia (np. transakcje w środku nocy).
+    *   `Dzien_Tygodnia`: Ekstrakcja dnia tygodnia (0-6). Może to pomóc w identyfikacji wzorców weekendowych vs. w dni robocze (chociaż istnieje już flaga `Is_Weekend`, ta cecha da więcej szczegółów).
+    *   `Dzien_Miesiaca`: Ekstrakcja dnia miesiąca. Może być skorelowane z cyklami wypłat.
+*   **4.2. Cechy relacyjne:**
+    *   `Stosunek_Kwoty_Do_Salda`: Obliczenie stosunku `Transaction_Amount` do `Account_Balance`. Wysoki stosunek może być sygnałem ostrzegawczym. Należy obsłużyć dzielenie przez zero, jeśli `Account_Balance` może wynosić 0.
+    *   `Odchylenie_Od_Sredniej_7d`: Obliczenie różnicy `Transaction_Amount - Avg_Transaction_Amount_7d`. Wskaże, jak bardzo bieżąca transakcja odbiega od niedawnego zachowania użytkownika.
+*   **4.3. Kodowanie zmiennych kategorycznych:**
+    *   Zastosowanie **One-Hot Encoding** dla zmiennych kategorycznych o niskiej kardynalności (małej liczbie unikalnych wartości), takich jak `Transaction_Type`, `Device_Type`, `Card_Type`, `Authentication_Method`.
+    *   Dla zmiennych o potencjalnie wysokiej kardynalności (`Location`, `Merchant_Category`), początkowo również zostanie zastosowany One-Hot Encoding, ale z zastrzeżeniem, że w przypadku zbyt dużej liczby nowych kolumn, rozważone zostanie grupowanie rzadszych kategorii lub użycie technik takich jak Target Encoding.
+
+**5. Wykrywanie i Obsługa Wartości Odstających (Outliers)**
+*   **5.1. Identyfikacja:** Analiza dystrybucji kluczowych zmiennych numerycznych (`Transaction_Amount`, `Account_Balance`, `Transaction_Distance`) za pomocą histogramów i wykresów pudełkowych.
+*   **5.2. Strategia obsługi:** Zastosowanie metody **kwantyli (capping/winsorization)**. Wartości poniżej 1. percentyla i powyżej 99. percentyla zostaną "spłaszczone" do wartości granicznych tych percentyli. Jest to bezpieczniejsza metoda niż usuwanie, ponieważ wartości odstające w danych o oszustwach mogą być właśnie tymi, których szukamy. Ta technika ograniczy ich wpływ na skalowanie i model, nie tracąc przy tym informacji o ich wystąpieniu.
+
+**6. Skalowanie Danych**
+*   **6.1. Uzasadnienie:** Wiele algorytmów uczenia maszynowego (np. Regresja Logistyczna, SVM, Sieci Neuronowe) jest wrażliwych na skalę cech. Skalowanie zapewnia, że wszystkie cechy mają podobny zakres, co poprawia zbieżność i wydajność modeli.
+*   **6.2. Metoda:** Zastosowanie **`StandardScaler`** (standaryzacja Z-score) na wszystkich cechach numerycznych (po obsłudze outlierów i inżynierii cech). Standaryzacja przekształci dane tak, aby miały średnią równą 0 i odchylenie standardowe równe 1.
+
+**7. Finalizacja Zbioru Danych**
+*   **7.1. Usunięcie zbędnych kolumn:** Usunięcie oryginalnych kolumn, które zostały przetworzone lub nie będą używane w modelu, tj. `Transaction_ID`, `User_ID` (chyba że będzie używany do grupowania w bardziej zaawansowanych modelach), `Timestamp` (po ekstrakcji cech).
+*   **7.2. Ostateczna weryfikacja:** Sprawdzenie finalnego kształtu zbioru danych, typów danych i braku wartości `NaN`.
+*   **7.3. Podział na zbiór treningowy i testowy:** Podział danych na zbiór treningowy i testowy (np. w proporcji 80/20) z zachowaniem proporcji klasy docelowej (`Fraud_Label`) za pomocą stratyfikacji.
+
+***
+
+Powyższy plan jest kompleksowy i stanowi solidną podstawę do przygotowania danych. Jestem gotowy na ewentualne uwagi i sugestie od CriticAgenta.
+
+--- Komunikat od: CriticAgent ---
+Analizuję przedstawiony plan.
+
+Plan jest logiczny i kompleksowy, jednak w kilku miejscach narusza kluczowe zasady prostoty i modułowości, co może utrudnić weryfikację i debugowanie. Wprowadzam następujące uwagi w celu jego poprawy.
+
+**1. Zbyt złożona Inżynieria Cech (Naruszenie zasady "Jedna zmiana na raz")**
+
+*   **Problem:** Kroki 4.1 i 4.2 proponują stworzenie wielu nowych, niezależnych cech w ramach jednego podpunktu. Krok 4.1 tworzy trzy cechy czasowe, a 4.2 dwie cechy relacyjne. Takie podejście utrudnia śledzenie zmian i debugowanie w przypadku, gdyby jedna z transformacji zawiodła.
+*   **Sugestia:** Rozbij te kroki na mniejsze, atomowe operacje. Każda nowa cecha powinna być tworzona w osobnym, dedykowanym kroku.
+    *   Zamiast jednego kroku 4.1, stwórz trzy osobne: "4.1. Stwórz cechę `Godzina_Transakcji`", "4.2. Stwórz cechę `Dzien_Tygodnia`", itd.
+    *   Podobnie, rozbij krok 4.2 na dwa osobne kroki dla `Stosunek_Kwoty_Do_Salda` i `Odchylenie_Od_Sredniej_7d`. Umożliwi to np. dedykowaną obsługę błędu dzielenia przez zero przy tworzeniu pierwszej z nich.
+
+**2. Zbyt agresywne Kodowanie Zmiennych Kategorycznych (Naruszenie zasady "Jedna zmiana na raz")**
+
+*   **Problem:** Krok 4.3, dotyczący kodowania zmiennych kategorycznych, jest zbyt szeroki. Zastosowanie One-Hot Encoding do wszystkich wymienionych zmiennych naraz, zwłaszcza tych o potencjalnie wysokiej kardynalności (`Location`, `Merchant_Category`), jest ryzykowne. Może to doprowadzić do niekontrolowanej "eksplozji" liczby kolumn i utrudnić interpretację.
+*   **Sugestia:** Podziel ten proces na co najmniej dwa etapy.
+    *   **Etap 1:** Zastosuj One-Hot Encoding tylko do zmiennych o gwarantowanej niskiej liczbie unikalnych wartości, np. `Transaction_Type`, `Device_Type`, `Card_Type`, `Authentication_Method`.
+    *   **Etap 2 (osobny krok):** Przeprowadź analizę kardynalności dla `Location` i `Merchant_Category`. Jeśli liczba unikalnych wartości jest wysoka (np. >15), zastosuj strategię redukcji, np. grupując najrzadsze kategorie w jedną wspólną kategorię `'Other'`, a dopiero potem zastosuj One-Hot Encoding. To musi być świadoma decyzja podjęta w osobnym kroku.
+
+**3. Grupowa obsługa wartości odstających (Naruszenie zasady "Jedna zmiana na raz")**
+
+*   **Problem:** Krok 5.2 sugeruje zastosowanie metody kwantyli (capping) do wielu kolumn jednocześnie. Chociaż metoda jest ta sama, jej wpływ na każdą zmienną może być różny. Grupowe przetwarzanie utrudnia weryfikację, czy operacja została poprawnie zastosowana do każdej z kolumn.
+*   **Sugestia:** Wykonaj operację cappingu w osobnych krokach dla każdej z kluczowych zmiennych (`Transaction_Amount`, `Account_Balance`, `Transaction_Distance`). Zapewni to pełną kontrolę i możliwość weryfikacji wyników dla każdej cechy z osobna.
+
+Proszę o zaktualizowanie planu zgodnie z powyższymi zaleceniami, aby był bardziej modułowy, odporny na błędy i łatwiejszy do wdrożenia. Odeślij poprawioną wersję do ponownej recenzji.
+
+--- Komunikat od: PlannerAgent ---
+Dziękuję za cenną recenzję. Zgadzam się, że wprowadzenie większej modułowości i atomowości operacji znacząco poprawi przejrzystość, kontrolę i łatwość debugowania procesu przygotowania danych.
+
+Poniżej przedstawiam **nową, kompletną wersję planu**, która uwzględnia wszystkie Twoje sugestie. Zmiany zostały wyraźnie oznaczone.
+
+***
+
+### **Plan Czyszczenia i Przygotowania Danych Transakcyjnych (Wersja 2)**
+
+**Cel:** Przygotowanie danych do analizy i modelowania klasyfikacyjnego w celu identyfikacji transakcji typu "fraud".
+
+**1. Wstępna Analiza i Weryfikacja Integralności Danych**
+*   **1.1. Wczytanie danych:** Załadowanie zbioru danych do struktury DataFrame.
+*   **1.2. Podstawowe informacje:** Użycie funkcji `.info()` w celu weryfikacji wstępnych typów danych i liczby niepustych wartości w każdej kolumnie.
+*   **1.3. Statystyki opisowe:** Wygenerowanie statystyk opisowych za pomocą `.describe(include='all')` dla kolumn numerycznych i kategorycznych.
+*   **1.4. Weryfikacja duplikatów:** Sprawdzenie, czy w kolumnie `Transaction_ID` istnieją zduplikowane wartości. W przypadku znalezienia duplikatów, należy je usunąć.
+
+**2. Obsługa Brakujących Wartości (Missing Values)**
+*   **2.1. Identyfikacja:** Dokładne zliczenie brakujących wartości (`NaN`, `None`) w każdej kolumnie.
+*   **2.2. Strategia imputacji:**
+    *   **Kolumny numeryczne (`Transaction_Amount`, `Account_Balance`, `Avg_Transaction_Amount_7d`, `Transaction_Distance`, `Risk_Score`, `Card_Age`):** W przypadku niewielkiej liczby braków (<5%), zastosowanie imputacji **medianą**.
+    *   **Kolumny kategoryczne (`Location`, `Merchant_Category`, `Device_Type`, `Card_Type`, `Authentication_Method`):** W przypadku braków, zastosowanie imputacji **modą** (najczęściej występującą wartością) lub utworzenie nowej kategorii `'Unknown'`.
+    *   **Kolumny o wysokim odsetku braków:** Jeśli jakakolwiek kolumna posiada > 60% brakujących wartości, zostanie ona usunięta.
+
+**3. Weryfikacja i Konwersja Typów Danych**
+*   **3.1. Konwersja kolumny `Timestamp`:** Zmiana typu danych kolumny `Timestamp` z `object` (string) na `datetime`.
+*   **3.2. Weryfikacja kolumn numerycznych:** Upewnienie się, że wszystkie kolumny, które powinny być numeryczne, mają odpowiedni typ (`float` lub `int`).
+*   **3.3. Weryfikacja kolumn binarnych:** Sprawdzenie, czy kolumny binarne (`IP_Address_Flag`, `Previous_Fraudulent_Activity`, `Is_Weekend`, `Fraud_Label`) mają typ `int` (0/1).
+
+**4. Inżynieria Cech (Feature Engineering)**
+*   **4.1. [ZMIANA - Krok atomowy] Stworzenie cechy `Godzina_Transakcji`:** Ekstrakcja godziny (0-23) z kolumny `Timestamp`.
+*   **4.2. [ZMIANA - Krok atomowy] Stworzenie cechy `Dzien_Tygodnia`:** Ekstrakcja dnia tygodnia (0-6) z kolumny `Timestamp`.
+*   **4.3. [ZMIANA - Krok atomowy] Stworzenie cechy `Dzien_Miesiaca`:** Ekstrakcja dnia miesiąca (1-31) z kolumny `Timestamp`.
+*   **4.4. [ZMIANA - Krok atomowy] Stworzenie cechy `Stosunek_Kwoty_Do_Salda`:** Obliczenie stosunku `Transaction_Amount` do `Account_Balance`. W kroku tym zostanie zaimplementowana obsługa przypadków, gdy `Account_Balance` wynosi zero (np. przez zastąpienie wyniku wartością 0 lub bardzo dużą liczbą, aby uniknąć błędu `DivisionByZeroError`).
+*   **4.5. [ZMIANA - Krok atomowy] Stworzenie cechy `Odchylenie_Od_Sredniej_7d`:** Obliczenie różnicy `Transaction_Amount - Avg_Transaction_Amount_7d`.
+*   **4.6. [ZMIANA - Podział kodowania] Kodowanie zmiennych kategorycznych o niskiej kardynalności:** Zastosowanie **One-Hot Encoding** dla zmiennych: `Transaction_Type`, `Device_Type`, `Card_Type`, `Authentication_Method`.
+*   **4.7. [ZMIANA - Podział kodowania] Analiza i kodowanie zmiennych kategorycznych o wysokiej kardynalności:**
+    *   **4.7.1. Analiza:** Zliczenie unikalnych wartości w kolumnach `Location` i `Merchant_Category`.
+    *   **4.7.2. Redukcja kardynalności:** Jeśli liczba unikalnych wartości w którejkolwiek z tych kolumn przekracza próg (np. 15), wszystkie kategorie występujące rzadziej niż w 1% przypadków zostaną zgrupowane w jedną, nową kategorię `'Other'`.
+    *   **4.7.3. Kodowanie:** Zastosowanie **One-Hot Encoding** na przetworzonych kolumnach `Location` i `Merchant_Category`.
+
+**5. Wykrywanie i Obsługa Wartości Odstających (Outliers)**
+*   **5.1. Identyfikacja:** Analiza dystrybucji kluczowych zmiennych numerycznych za pomocą histogramów i wykresów pudełkowych w celu wizualnego potwierdzenia obecności wartości odstających.
+*   **5.2. [ZMIANA - Krok atomowy] Obsługa wartości odstających w `Transaction_Amount`:** Zastosowanie metody kwantyli (capping). Wartości poniżej 1. percentyla i powyżej 99. percentyla zostaną zastąpione wartościami granicznymi tych percentyli.
+*   **5.3. [ZMIANA - Krok atomowy] Obsługa wartości odstających w `Account_Balance`:** Zastosowanie metody kwantyli (capping) z progami 1. i 99. percentyla.
+*   **5.4. [ZMIANA - Krok atomowy] Obsługa wartości odstających w `Transaction_Distance`:** Zastosowanie metody kwantyli (capping) z progami 1. i 99. percentyla.
+
+**6. Skalowanie Danych**
+*   **6.1. Uzasadnienie:** Wiele algorytmów uczenia maszynowego jest wrażliwych na skalę cech. Skalowanie zapewnia, że wszystkie cechy mają podobny zakres, co poprawia zbieżność i wydajność modeli.
+*   **6.2. Metoda:** Zastosowanie **`StandardScaler`** (standaryzacja Z-score) na wszystkich cechach numerycznych (po obsłudze outlierów i inżynierii cech).
+
+**7. Finalizacja Zbioru Danych**
+*   **7.1. Usunięcie zbędnych kolumn:** Usunięcie oryginalnych kolumn, które zostały przetworzone lub nie będą używane w modelu, tj. `Transaction_ID`, `User_ID`, `Timestamp` oraz oryginalne kolumny kategoryczne po ich zakodowaniu.
+*   **7.2. Ostateczna weryfikacja:** Sprawdzenie finalnego kształtu zbioru danych, typów danych i braku wartości `NaN`.
+*   **7.3. Podział na zbiór treningowy i testowy:** Podział danych na zbiór treningowy i testowy (np. w proporcji 80/20) z zachowaniem proporcji klasy docelowej (`Fraud_Label`) za pomocą stratyfikacji.
+
+***
+
+Przesyłam zaktualizowany, bardziej szczegółowy i modułowy plan do ponownej recenzji.
+
+--- Komunikat od: CriticAgent ---
+OSTATECZNY PLAN:
+### **Plan Czyszczenia i Przygotowania Danych Transakcyjnych (Wersja 2)**
+
+**Cel:** Przygotowanie danych do analizy i modelowania klasyfikacyjnego w celu identyfikacji transakcji typu "fraud".
+
+**1. Wstępna Analiza i Weryfikacja Integralności Danych**
+*   **1.1. Wczytanie danych:** Załadowanie zbioru danych do struktury DataFrame.
+*   **1.2. Podstawowe informacje:** Użycie funkcji `.info()` w celu weryfikacji wstępnych typów danych i liczby niepustych wartości w każdej kolumnie.
+*   **1.3. Statystyki opisowe:** Wygenerowanie statystyk opisowych za pomocą `.describe(include='all')` dla kolumn numerycznych i kategorycznych.
+*   **1.4. Weryfikacja duplikatów:** Sprawdzenie, czy w kolumnie `Transaction_ID` istnieją zduplikowane wartości. W przypadku znalezienia duplikatów, należy je usunąć.
+
+**2. Obsługa Brakujących Wartości (Missing Values)**
+*   **2.1. Identyfikacja:** Dokładne zliczenie brakujących wartości (`NaN`, `None`) w każdej kolumnie.
+*   **2.2. Strategia imputacji:**
+    *   **Kolumny numeryczne (`Transaction_Amount`, `Account_Balance`, `Avg_Transaction_Amount_7d`, `Transaction_Distance`, `Risk_Score`, `Card_Age`):** W przypadku niewielkiej liczby braków (<5%), zastosowanie imputacji **medianą**.
+    *   **Kolumny kategoryczne (`Location`, `Merchant_Category`, `Device_Type`, `Card_Type`, `Authentication_Method`):** W przypadku braków, zastosowanie imputacji **modą** (najczęściej występującą wartością) lub utworzenie nowej kategorii `'Unknown'`.
+    *   **Kolumny o wysokim odsetku braków:** Jeśli jakakolwiek kolumna posiada > 60% brakujących wartości, zostanie ona usunięta.
+
+**3. Weryfikacja i Konwersja Typów Danych**
+*   **3.1. Konwersja kolumny `Timestamp`:** Zmiana typu danych kolumny `Timestamp` z `object` (string) na `datetime`.
+*   **3.2. Weryfikacja kolumn numerycznych:** Upewnienie się, że wszystkie kolumny, które powinny być numeryczne, mają odpowiedni typ (`float` lub `int`).
+*   **3.3. Weryfikacja kolumn binarnych:** Sprawdzenie, czy kolumny binarne (`IP_Address_Flag`, `Previous_Fraudulent_Activity`, `Is_Weekend`, `Fraud_Label`) mają typ `int` (0/1).
+
+**4. Inżynieria Cech (Feature Engineering)**
+*   **4.1. [ZMIANA - Krok atomowy] Stworzenie cechy `Godzina_Transakcji`:** Ekstrakcja godziny (0-23) z kolumny `Timestamp`.
+*   **4.2. [ZMIANA - Krok atomowy] Stworzenie cechy `Dzien_Tygodnia`:** Ekstrakcja dnia tygodnia (0-6) z kolumny `Timestamp`.
+*   **4.3. [ZMIANA - Krok atomowy] Stworzenie cechy `Dzien_Miesiaca`:** Ekstrakcja dnia miesiąca (1-31) z kolumny `Timestamp`.
+*   **4.4. [ZMIANA - Krok atomowy] Stworzenie cechy `Stosunek_Kwoty_Do_Salda`:** Obliczenie stosunku `Transaction_Amount` do `Account_Balance`. W kroku tym zostanie zaimplementowana obsługa przypadków, gdy `Account_Balance` wynosi zero (np. przez zastąpienie wyniku wartością 0 lub bardzo dużą liczbą, aby uniknąć błędu `DivisionByZeroError`).
+*   **4.5. [ZMIANA - Krok atomowy] Stworzenie cechy `Odchylenie_Od_Sredniej_7d`:** Obliczenie różnicy `Transaction_Amount - Avg_Transaction_Amount_7d`.
+*   **4.6. [ZMIANA - Podział kodowania] Kodowanie zmiennych kategorycznych o niskiej kardynalności:** Zastosowanie **One-Hot Encoding** dla zmiennych: `Transaction_Type`, `Device_Type`, `Card_Type`, `Authentication_Method`.
+*   **4.7. [ZMIANA - Podział kodowania] Analiza i kodowanie zmiennych kategorycznych o wysokiej kardynalności:**
+    *   **4.7.1. Analiza:** Zliczenie unikalnych wartości w kolumnach `Location` i `Merchant_Category`.
+    *   **4.7.2. Redukcja kardynalności:** Jeśli liczba unikalnych wartości w którejkolwiek z tych kolumn przekracza próg (np. 15), wszystkie kategorie występujące rzadziej niż w 1% przypadków zostaną zgrupowane w jedną, nową kategorię `'Other'`.
+    *   **4.7.3. Kodowanie:** Zastosowanie **One-Hot Encoding** na przetworzonych kolumnach `Location` i `Merchant_Category`.
+
+**5. Wykrywanie i Obsługa Wartości Odstających (Outliers)**
+*   **5.1. Identyfikacja:** Analiza dystrybucji kluczowych zmiennych numerycznych za pomocą histogramów i wykresów pudełkowych w celu wizualnego potwierdzenia obecności wartości odstających.
+*   **5.2. [ZMIANA - Krok atomowy] Obsługa wartości odstających w `Transaction_Amount`:** Zastosowanie metody kwantyli (capping). Wartości poniżej 1. percentyla i powyżej 99. percentyla zostaną zastąpione wartościami granicznymi tych percentyli.
+*   **5.3. [ZMIANA - Krok atomowy] Obsługa wartości odstających w `Account_Balance`:** Zastosowanie metody kwantyli (capping) z progami 1. i 99. percentyla.
+*   **5.4. [ZMIANA - Krok atomowy] Obsługa wartości odstających w `Transaction_Distance`:** Zastosowanie metody kwantyli (capping) z progami 1. i 99. percentyla.
+
+**6. Skalowanie Danych**
+*   **6.1. Uzasadnienie:** Wiele algorytmów uczenia maszynowego jest wrażliwych na skalę cech. Skalowanie zapewnia, że wszystkie cechy mają podobny zakres, co poprawia zbieżność i wydajność modeli.
+*   **6.2. Metoda:** Zastosowanie **`StandardScaler`** (standaryzacja Z-score) na wszystkich cechach numerycznych (po obsłudze outlierów i inżynierii cech).
+
+**7. Finalizacja Zbioru Danych**
+*   **7.1. Usunięcie zbędnych kolumn:** Usunięcie oryginalnych kolumn, które zostały przetworzone lub nie będą używane w modelu, tj. `Transaction_ID`, `User_ID`, `Timestamp` oraz oryginalne kolumny kategoryczne po ich zakodowaniu.
+*   **7.2. Ostateczna weryfikacja:** Sprawdzenie finalnego kształtu zbioru danych, typów danych i braku wartości `NaN`.
+*   **7.3. Podział na zbiór treningowy i testowy:** Podział danych na zbiór treningowy i testowy (np. w proporcji 80/20) z zachowaniem proporcji klasy docelowej (`Fraud_Label`) za pomocą stratyfikacji.
+
+PLAN_AKCEPTOWANY_PRZEJSCIE_DO_IMPLEMENTACJI

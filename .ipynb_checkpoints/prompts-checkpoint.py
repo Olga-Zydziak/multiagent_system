@@ -1,3 +1,7 @@
+from typing import TypedDict, List, Callable, Dict, Optional, Union, Any
+import json
+import re
+
 class AutoGen_Agents_Propmpt:
     
     @staticmethod

@@ -1,3 +1,7 @@
+import autogen
+from autogen import Agent, ConversableAgent
+
+
 class TriggerAgent(ConversableAgent):
     """Agent decydujący, czy dane nadają się do dalszego przetwarzania."""
     def __init__(self, llm_config, prompt):
@@ -26,3 +30,6 @@ class CriticAgent(ConversableAgent):
             llm_config=llm_config,
             system_message=prompt
         )
+        
+        
+        
