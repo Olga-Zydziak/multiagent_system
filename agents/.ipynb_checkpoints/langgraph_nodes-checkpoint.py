@@ -9,15 +9,15 @@ import json
 import re
 from typing import TypedDict, List, Callable, Dict, Optional, Union, Any
 import pandas as pd
-from typing import TypedDict, List, Callable, Dict, Optional, Union, Any
 import langchain
 from langchain_google_vertexai import ChatVertexAI
 from langchain_anthropic import ChatAnthropic
 from .state import AgentWorkflowState
 from prompts import Langchain_Agents_prompts
 from tools.utils import *
+from tools.langchain_tools import *
 from prompts import ArchitecturalRule, ArchitecturalRulesManager,ARCHITECTURAL_RULES
-
+from config import MAX_CORRECTION_ATTEMPTS, PROJECT_ID,LOCATION
 # --- Definicje węzłów LangGraph ---
 
 def schema_reader_node(state: AgentWorkflowState):

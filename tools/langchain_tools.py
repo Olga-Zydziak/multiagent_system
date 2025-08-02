@@ -1,3 +1,5 @@
+from pydantic import BaseModel, Field
+from langchain_core.tools import tool
 #--BaseModel
 
 class DebugReport(BaseModel):
