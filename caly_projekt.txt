@@ -97,7 +97,7 @@ from typing import TypedDict, List, Callable, Dict, Optional, Union, Any
 from config import PROJECT_ID, LOCATION, MEMORY_ENGINE_DISPLAY_NAME, INPUT_FILE_PATH,MAIN_AGENT,CRITIC_MODEL,CODE_MODEL, API_TYPE_GEMINI,API_TYPE_SONNET, ANTHROPIC_API_KEY,basic_config_agent
 from agents.state import AgentWorkflowState
 from agents.autogen_agents import TriggerAgent,PlannerAgent,CriticAgent
-from prompts import AutoGen_Agents_Propmpt
+from prompts import LangchainAgentsPrompts,AutoGenAgentsPrompts
 from agents.langgraph_nodes import * 
 from agents.autogen_agent_utils import run_autogen_planning_phase
 from memory.memory_bank_client import MemoryBankClient
@@ -144,17 +144,19 @@ main_agent_configuration={"cache_seed": 42,"seed": 42,"temperature": 0.0,
                         "config_list": basic_config_agent(agent_name=MAIN_AGENT, api_type=API_TYPE_GEMINI, location=LOCATION, project_id=PROJECT_ID)}
 critic_agent_configuration ={"cache_seed": 42,"seed": 42,"temperature": 0.0,
                         "config_list": basic_config_agent(api_key=ANTHROPIC_API_KEY,agent_name=CRITIC_MODEL, api_type=API_TYPE_SONNET)}
-trigger_prompt = str(AutoGen_Agents_Propmpt.Trigger_prompt())
-planner_prompt = str(AutoGen_Agents_Propmpt.Planner_prompt())
-critic_prompt = str(AutoGen_Agents_Propmpt.Critic_prompt())
+trigger_prompt = str(AutoGenAgentsPrompts.Trigger_prompt())
+planner_prompt = str(AutoGenAgentsPrompts.Planner_prompt())
+critic_prompt = str(AutoGenAgentsPrompts.Critic_prompt())
 #---WYWOŁANIE AGENTÓW
 trigger_agent = TriggerAgent(llm_config=main_agent_configuration, prompt=trigger_prompt)
 planner_agent = PlannerAgent(llm_config=main_agent_configuration,prompt=planner_prompt)
 critic_agent = CriticAgent(llm_config=main_agent_configuration,prompt=critic_prompt)
 # --- Koniec komórki ---
+
+# --- Koniec komórki ---
 if __name__ == "__main__":
     os.makedirs("reports", exist_ok=True)
-    system_source_code = read_source_code("Agents_beta.ipynb") # Pamiętaj o poprawnej nazwie pliku
+    system_source_code = read_source_code("main.ipynb")
 
     # --- Inicjalizacja Pamięci i Uruchomienia ---
     memory_client = MemoryBankClient(client=client, agent_engine=agent_engine)
@@ -186,14 +188,18 @@ if __name__ == "__main__":
     except Exception as e:
         print(f"OSTRZEŻENIE: Nie udało się pobrać inspiracji z pamięci: {e}")
 
-    # --- Krok 1: Faza planowania AutoGen ---
-    final_plan, autogen_log = run_autogen_planning_phase(input_path=INPUT_FILE_PATH, inspiration_prompt=inspiration_prompt,
-                                                         trigger_agent=trigger_agent,planner_agent=planner_agent,critic_agent=critic_agent,manager_agent_config=main_agent_configuration)
-
-    # Zapis logu z planowania (zawsze)
+    # --- Krok 1: Faza planowania (AutoGen) ---
+    final_plan, autogen_log = run_autogen_planning_phase(
+        input_path=INPUT_FILE_PATH, 
+        inspiration_prompt=inspiration_prompt,
+        trigger_agent=trigger_agent,
+        planner_agent=planner_agent,
+        critic_agent=critic_agent,
+        manager_agent_config=main_agent_configuration
+    )
     save_autogen_conversation_log(log_content=autogen_log, file_path="reports/autogen_planning_conversation.log")
 
-    # --- Krok 2: Faza wykonania LangGraph ---
+    # --- Krok 2: Faza wykonania (LangGraph) ---
     if final_plan:
         print("\n" + "="*80)
         print("### ### FAZA 2: URUCHAMIANIE WYKONANIA PLANU (LangGraph) ### ###")
@@ -201,80 +207,72 @@ if __name__ == "__main__":
         
         workflow = StateGraph(AgentWorkflowState)
         
-        # ZMIANA: Dodajemy nowy węzeł commit_memory_node do listy
+        # <<< ZMIANA TUTAJ: Zaktualizowana lista węzłów >>>
         nodes = [
             "schema_reader", "code_generator", "architectural_validator", 
             "data_code_executor", "universal_debugger", "apply_code_fix", 
-            "human_approval", "package_installer", "reporting_agent", 
-            "report_executor", "human_escalation", "sync_report_code",
-            "commit_memory" # NOWY WĘZEŁ
+            "human_approval", "package_installer", "human_escalation", 
+            "sync_report_code", "commit_memory",
+            # Nowe, wyspecjalizowane węzły raportujące:
+            "summary_analyst", "plot_generator", "report_composer" 
         ]
         for name in nodes: workflow.add_node(name, globals()[f"{name}_node"])
 
-        # --- Definicja Krawędzi Grafu ---
+        # Definicja krawędzi
         workflow.set_entry_point("schema_reader")
+        
+        # Ścieżka przetwarzania danych
         workflow.add_edge("schema_reader", "code_generator")
         workflow.add_edge("code_generator", "architectural_validator")
-
-        # Funkcja routująca, której możemy używać wielokrotnie
+        
         def should_continue_or_debug(state: AgentWorkflowState) -> str:
-            """Sprawdza, czy w stanie jest błąd i decyduje o dalszej ścieżce."""
             if state.get("error_message"):
                 if state.get("correction_attempts", 0) >= MAX_CORRECTION_ATTEMPTS:
                     return "request_human_help"
                 return "call_debugger"
-            # Jeśli nie ma błędu, kontynuuj normalną ścieżkę
             return "continue"
 
-        # 1. KRAWĘDŹ WARUNKOWA po walidatorze architektury (KLUCZOWA ZMIANA)
         workflow.add_conditional_edges(
             "architectural_validator",
             should_continue_or_debug,
-            {
-                "call_debugger": "universal_debugger",
-                "request_human_help": "human_escalation",
-                "continue": "data_code_executor" # Przejdź dalej tylko jeśli jest OK
-            }
+            {"call_debugger": "universal_debugger", "request_human_help": "human_escalation", "continue": "data_code_executor"}
         )
-
-        # 2. KRAWĘDŹ WARUNKOWA po wykonaniu kodu danych
         workflow.add_conditional_edges(
             "data_code_executor",
             should_continue_or_debug,
-            {
-                "call_debugger": "universal_debugger",
-                "request_human_help": "human_escalation",
-                "continue": "commit_memory" # Jeśli sukces, idź do zapisu w pamięci, a NIE do END
-            }
+            {"call_debugger": "universal_debugger", "request_human_help": "human_escalation", "continue": "commit_memory"}
         )
-
-        # Ścieżka sukcesu i pozostałe krawędzie
-        workflow.add_edge("commit_memory", "reporting_agent")
-        workflow.add_edge("reporting_agent", "report_executor")
-
-        # Krawędź warunkowa po wykonaniu raportu
+        
+        # <<< ZMIANA TUTAJ: Nowa ścieżka raportowania >>>
+        workflow.add_edge("commit_memory", "summary_analyst")
         workflow.add_conditional_edges(
-            "report_executor",
+            "summary_analyst",
             should_continue_or_debug,
-            {
-                "call_debugger": "universal_debugger",
-                "request_human_help": "human_escalation",
-                "continue": END # Dopiero tutaj kończymy pracę po sukcesie
-            }
+            {"call_debugger": "universal_debugger", "request_human_help": "human_escalation", "continue": "plot_generator"}
+        )
+        workflow.add_conditional_edges(
+            "plot_generator",
+            should_continue_or_debug,
+            {"call_debugger": "universal_debugger", "request_human_help": "human_escalation", "continue": "report_composer"}
+        )
+        workflow.add_conditional_edges(
+            "report_composer",
+            should_continue_or_debug,
+            {"call_debugger": "universal_debugger", "request_human_help": "human_escalation", "continue": END}
         )
 
-        # Ścieżki naprawcze i eskalacji (bez zmian)
+        # Ścieżki naprawcze
         workflow.add_edge("human_escalation", END)
-        workflow.add_edge("package_installer", "data_code_executor") # Wracamy do wykonania po instalacji
+        workflow.add_edge("package_installer", "data_code_executor")
 
         def route_after_fix(state):
             failing_node = state.get("failing_node")
-            if failing_node == "report_executor":
-                return "sync_report_code"
-            # Po każdej innej naprawie wracamy do walidacji architektonicznej
+            # Po naprawie wraca do węzła, który zawiódł
+            if failing_node:
+                return failing_node
+            # Domyślnie wraca do walidacji
             return "architectural_validator"
 
-        workflow.add_edge("sync_report_code", "report_executor")
         workflow.add_conditional_edges("apply_code_fix", route_after_fix)
 
         def route_from_debugger(state):
@@ -286,33 +284,29 @@ if __name__ == "__main__":
 
         workflow.add_conditional_edges("universal_debugger", route_from_debugger)
         workflow.add_conditional_edges("human_approval", lambda s: s.get("user_approval_status"), {
-            "APPROVED": "package_installer",
-            "REJECTED": "universal_debugger"
+            "APPROVED": "package_installer", "REJECTED": "universal_debugger"
         })
 
-        
-        
-        app_config ={"MAIN_AGENT" : MAIN_AGENT, "CODE_MODEL": CODE_MODEL, "CRITIC_MODEL":CRITIC_MODEL}
-        
-        
         app = workflow.compile()
         
+        app_config = {"MAIN_AGENT": MAIN_AGENT, "CODE_MODEL": CODE_MODEL, "CRITIC_MODEL": CRITIC_MODEL}
+        
         initial_state = {
-            "config":app_config,
+            "config": app_config,
             "plan": final_plan, 
             "input_path": INPUT_FILE_PATH,
             "output_path": "reports/processed_data.csv",
             "report_output_path": "reports/transformation_report.html",
             "correction_attempts": 0, 
+            "correction_history": [],
             "source_code": system_source_code,
             "autogen_log": autogen_log,
             "memory_client": memory_client,
             "run_id": run_id,
             "dataset_signature": dataset_signature,
-            "pending_fix_session": None # ZMIANA: Dodanie nowego pola do stanu początkowego
+            "pending_fix_session": None
         }
         
-        # --- Uruchomienie grafu z przechwytywaniem logów ---
         langgraph_log = ""
         final_run_state = initial_state.copy()
         
@@ -320,9 +314,9 @@ if __name__ == "__main__":
             for node_name, state_update in event.items():
                 if "__end__" not in node_name:
                     print(f"--- Krok: '{node_name}' ---")
-                    if state_update: # Zabezpieczenie przed błędem 'NoneType'
+                    if state_update:
                         printable_update = state_update.copy()
-                        for key in ["generated_code", "corrected_code", "generated_report_code", "error_context_code"]:
+                        for key in ["generated_code", "corrected_code", "generated_report_code", "error_context_code", "plot_generation_code", "summary_html"]:
                             if key in printable_update and printable_update[key]:
                                 print(f"--- {key.upper()} ---")
                                 print(printable_update[key])
@@ -338,16 +332,16 @@ if __name__ == "__main__":
                         print("  [INFO] Węzeł zakończył pracę bez aktualizacji stanu.")
                     print("-" * 20 + "\n")
 
-        # Zapis logu z wykonania (po zakończeniu pętli)
         save_langgraph_execution_log(log_content=langgraph_log, file_path="reports/langgraph_execution.log")
 
-        # Uruchomienie audytora
         final_run_state['langgraph_log'] = langgraph_log
         meta_auditor_node(final_run_state)
 
         print("\n\n--- ZAKOŃCZONO PRACĘ GRAFU I AUDYT ---")
     else:
         print("Proces zakończony. Brak planu do wykonania.")
+# --- Koniec komórki ---
+
 # --- Koniec komórki ---
 
 
@@ -358,7 +352,7 @@ from typing import TypedDict, List, Callable, Dict, Optional, Union, Any
 import json
 import re
 
-class AutoGen_Agents_Propmpt:
+class AutoGenAgentsPrompts:
     
     @staticmethod
     def Trigger_prompt() -> str:
@@ -414,18 +408,74 @@ Na samym końcu wiadomości dodaj frazę:
     
     
     
-class Langchain_Agents_prompts:
+class LangchainAgentsPrompts:
+    
+    SYSTEM_PROMPT_NEXUS_ENGINEER = """
+# ===================================================================
+# ### GŁÓWNA DYREKTYWA: PERSONA I CEL ###
+# ===================================================================
+Jesteś "Nexus" – światowej klasy, autonomicznym inżynierem oprogramowania AI. Twoją specjalizacją jest pisanie czystego, wydajnego i solidnego kodu w Pythonie. Twoim nadrzędnym celem jest rozwiązywanie problemów poprzez dostarczanie kompletnych, gotowych do wdrożenia i samowystarczalnych skryptów.
+
+# ===================================================================
+# ### ZASADY PODSTAWOWE (CORE PRINCIPLES) ###
+# ===================================================================
+Zawsze przestrzegaj następujących zasad:
+
+1.  **Myślenie Krok po Kroku (Chain of Thought):** Zanim napiszesz jakikolwiek kod, najpierw przeanalizuj problem i stwórz plan działania. Zapisz ten plan w formie komentarzy w kodzie. To porządkuje Twoją logikę i prowadzi do lepszych rozwiązań.
+2.  **Solidność i Odporność (Robustness):** Przewiduj potencjalne problemy i skrajne przypadki (edge cases). Jeśli to stosowne, używaj bloków `try...except` do obsługi błędów. Upewnij się, że kod nie zawiedzie przy nieoczekiwanych danych wejściowych.
+3.  **Samowystarczalność (Self-Containment):** Twój kod musi być w pełni kompletny. Nie zakładaj istnienia żadnych zewnętrznych zmiennych, plików czy funkcji, o ile nie zostały one jawnie wymienione jako "Dostępne Zasoby".
+4.  **Przejrzystość ponad Spryt (Clarity over Cleverness):** Pisz kod, który jest łatwy do zrozumienia dla człowieka. Używaj czytelnych nazw zmiennych i dodawaj komentarze tam, gdzie logika jest złożona. Unikaj nadmiernie skomplikowanych, jednowierszowych rozwiązań.
+
+# ===================================================================
+# ### PROCES ROZWIĄZYWANIA PROBLEMÓW ###
+# ===================================================================
+Gdy otrzymujesz zadanie, postępuj według następującego schematu:
+
+1.  **ANALIZA CELU:** W pełni zrozum, co ma zostać osiągnięte. Zidentyfikuj dane wejściowe i oczekiwany rezultat.
+2.  **TWORZENIE PLANU:** Wewnątrz bloku kodu, stwórz plan działania w formie komentarzy (`# Krok 1: ...`, `# Krok 2: ...`).
+3.  **IMPLEMENTACJA KODU:** Napisz kod, który realizuje Twój plan.
+4.  **AUTOKOREKTA I WERYFIKACJA:** Zanim zakończysz, dokonaj krytycznego przeglądu własnego kodu. Zadaj sobie pytania: "Czy ten kod jest kompletny?", "Czy obsłużyłem przypadki brzegowe?", "Czy jest zgodny ze wszystkimi zasadami?". Popraw wszelkie znalezione niedociągnięcia.
+
+"""
+    
+    
+    
     
     
     @staticmethod
     def code_generator(plan: str, available_columns: List[str]) -> str:
-        return f"""**Persona:** Ekspert Inżynierii Danych.\n**Plan Biznesowy:**\n{plan}\n
-        **Dostępne Kolumny:**\n{available_columns}\n{ArchitecturalRulesManager.get_rules_as_string()}\n
-        **Zadanie:** Napisz kompletny skrypt Pythona realizujący plan, przestrzegając wszystkich zasad. Odpowiedź musi zawierać tylko i wyłącznie blok kodu ```python ... ```."""
+        task_prompt = f"""
+# ===================================================================
+# ### AKTUALNE ZADANIE: GENEROWANIE KODU ###
+# ===================================================================
+**Cel:** Na podstawie poniższego planu biznesowego i dostępnych danych, napisz kompletny i samowystarczalny skrypt w Pythonie.
+
+**Plan Biznesowy do Implementacji:**
+{plan}
+
+**Dostępne Kolumny w Danych:**
+{available_columns}
+
+**Wymagania Architektoniczne (Bezwzględnie Przestrzegaj):**
+{ArchitecturalRulesManager.get_rules_as_string()}
+""" 
+        return LangchainAgentsPrompts.SYSTEM_PROMPT_NEXUS_ENGINEER+ task_prompt
     
     @staticmethod
-    def tool_based_debugger() -> str:
-        return """Jesteś 'Głównym Inżynierem Jakości Kodu'. Twoim zadaniem jest nie tylko naprawienie zgłoszonego błędu, ale zapewnienie, że kod będzie działał poprawnie.
+    def tool_based_debugger(failing_node: str) -> str:
+        return LangchainAgentsPrompts.SYSTEM_PROMPT_NEXUS_ENGINEER+ f"""Jesteś 'Głównym Inżynierem Jakości Kodu'. Twoim zadaniem jest nie tylko naprawienie zgłoszonego błędu, ale zapewnienie, że kod będzie działał poprawnie.
+        --- KONTEKST ZADANIA ---
+Błąd wystąpił w węźle o nazwie: '{failing_node}'. Twoje zadanie zależy od tego kontekstu:
+- Jeśli `failing_node` to 'data_code_executor' lub 'architectural_validator', Twoim zadaniem jest naprawa GŁÓWNEGO skryptu do przetwarzania danych.
+- Jeśli `failing_node` to 'plot_generator_node', Twoim zadaniem jest napisanie FRAGMENTU KODU W PYTHONIE, który generuje wykresy.
+- Jeśli `failing_node` to 'summary_analyst_node', Twoim zadaniem jest napisanie kodu HTML z podsumowaniem analitycznym.
+**Bezwzględnie przestrzegaj tych zasad:**
+     - Używaj WYŁĄCZNIE biblioteki `matplotlib.pyplot`. Nie używaj `plotly` ani `seaborn`.
+    - NIE importuj bibliotek.
+    - Używaj tylko ramek danych `df_original` i `df_processed`.
+    - NIE używaj `plt.show()`.
+    - Każdą figurę (`fig`) MUSISZ dodać do listy `figures_to_embed`.
+---
 - Jeśli błąd to `ModuleNotFoundError`, użyj `request_package_installation`.
 - Jeśli błąd to `ImportError` wskazujący na konflikt wersji, również użyj `request_package_installation`, aby zasugerować aktualizację pakietu, który jest źródłem błędu.
 - Dla wszystkich innych błędów w kodzie (np. `SyntaxError`, `KeyError`), użyj `propose_code_fix` a następnie przeanalizuj poniższy błąd i wadliwy kod. Twoja praca składa się z dwóch kroków:
@@ -434,44 +484,54 @@ class Langchain_Agents_prompts:
 Przeanalizuj poniższy błąd i wadliwy kod. """
 
     @staticmethod
-    def create_reporting_prompt(plan: str, original_summary: str, processed_summary: str) -> str:
-        return f'''
-**Persona:** Jesteś Głównym Analitykiem Danych. Twoim zadaniem jest stworzenie kompleksowego, wizualnego raportu, który krok po kroku opowie historię transformacji danych. Masz pełną swobodę w doborze najlepszych wizualizacji.
+    def summary_analyst_prompt(plan: str, original_summary: str, processed_summary: str) -> str:
+        """
+        Tworzy prompt dla agenta, którego JEDYNYM zadaniem jest analiza
+        i napisanie tekstowego podsumowania w HTML.
+        """
+        return f"""
+        Jesteś analitykiem danych. Twoim jedynym zadaniem jest napisanie zwięzłego, menedżerskiego podsumowania w formacie HTML, które podkreśla kluczowe korzyści z transformacji danych.
+        Skup się na zmianach w brakujących danych, wartościach odstających i liczbie kolumn.
+        
+        PLAN TRANSFORMACJI, KTÓRY MASZ OPISAĆ: 
+        {plan}
+        
+        DANE PRZED TRANSFORMACJĄ (PODSUMOWANIE): 
+        {original_summary}
+        
+        DANE PO TRANSFORMACJI (PODSUMOWANIE): 
+        {processed_summary}
+        
+        Twoja odpowiedź musi być tylko i wyłącznie kodem HTML, gotowym do wstawienia do raportu.
+        """
 
-**Główny Cel Biznesowy:** Udowodnij wartość przeprowadzonego procesu czyszczenia i przygotowania danych. Pokaż, "co było przed" i "co jest po" dla każdego istotnego kroku.
-
-**Plan Transformacji (Twój Scenariusz):**
-Oto plan, który został zrealizowany. Twoim zadaniem jest zilustrowanie każdego z tych punktów.
-{plan}
-
-
-**Dostępne Dane:**
-W środowisku wykonawczym dostępne będą pełne ramki danych: `df_original` i `df_processed`. Możesz na nich operować. Użyj też poniższych podsumowań do wstępnej analizy.
-{original_summary}
-{processed_summary}
-
-**Twoje Zadanie (Szczegółowe Wytyczne):**
-Napisz kompletny i samodzielny fragment kodu w Pythonie, który wygeneruje dwie kluczowe zmienne: `summary_text` (HTML) oraz `figures_to_embed` (lista figur Matplotlib).
-
-1.  **Stwórz `summary_text`:** Napisz zwięzłe, menedżerskie podsumowanie w HTML, które podkreśla kluczowe korzyści z transformacji.
-2.  **Stwórz pustą listę `figures_to_embed`**.
-3.  **Przejdź przez KAŻDY krok z powyższego planu:**
-    * Dla każdego kroku (np. "Obsługa brakujących wartości", "Inżynieria cech czasowych", "Obsługa outlierów") stwórz jedną lub więcej wizualizacji, które najlepiej go ilustrują.
-    * **Przykładowe inspiracje:**
-        * **Brakujące wartości:** Wykres słupkowy pokazujący liczbę braków przed i po imputacji.
-        * **Inżynieria cech:** Histogram nowej cechy (np. `Godzina_transakcji`).
-        * **Wartości odstające:** Boxploty dla kluczowych kolumn przed i po winsoryzacji.
-        * **Korekta typów danych:** Nie wymaga wizualizacji, możesz to pominąć.
-    * Każdy wykres musi mieć profesjonalny wygląd: tytuł, opisane osie, legendę.
-    * **Przed dodaniem figury do listy, wywołaj na niej `fig.tight_layout()`**, aby upewnić się, że wszystkie elementy (tytuły, osie) mieszczą się w zapisywanym obrazie.
-    * **DODAJ obiekt wygenerowanej figury do listy `figures_to_embed`**.
-
-**Krytyczne Ograniczenia:**
-- Twoja odpowiedź to **tylko i wyłącznie** kod Pythona.
-- NIE PISZ importów, definicji funkcji, `plt.show()` ani kodu do zapisu plików.
-
-Zacznij działać, Analityku! Pokaż nam historię ukrytą w danych.
-'''
+    @staticmethod
+    def plot_generator_prompt(plan: str) -> str:
+        """
+        Tworzy prompt dla agenta, którego JEDYNYM zadaniem jest napisanie
+        kodu w Pythonie do generowania wykresów.
+        """
+        return LangchainAgentsPrompts.SYSTEM_PROMPT_NEXUS_ENGINEER+ f"""
+        Jesteś ekspertem od wizualizacji danych w Pythonie przy użyciu biblioteki Matplotlib. Twoim jedynym zadaniem jest napisanie fragmentu kodu w Pythonie.
+        
+        Ten kod, gdy zostanie wykonany, musi stworzyć co najmniej dwie figury `matplotlib` ilustrujące zmiany w danych opisane w poniższym planie. Każdą stworzoną figurę (obiekt `fig`) musisz dodać do listy o nazwie `figures_to_embed`.
+        
+        W środowisku wykonawczym Twojego kodu dostępne będą ramki danych `df_original` i `df_processed`.
+        
+        PLAN, KTÓRY MASZ ZILUSTROWAĆ:
+        {plan}
+        
+        WAŻNE ZASADY:
+1.  Każdy wykres musi mieć tytuł i czytelne etykiety osi.
+2.  Użyj `fig.tight_layout()` przed dodaniem figury do listy.
+3.  **Używaj WYŁĄCZNIE biblioteki `matplotlib.pyplot`. Nie używaj `plotly`, `seaborn` ani żadnej innej.**
+4.  NIE importuj bibliotek. Zakładaj, że `matplotlib.pyplot as plt` i `pandas as pd` są już dostępne.
+5.  NIE twórz własnych danych. Używaj wyłącznie ramek danych `df_original` i `df_processed`.
+6.  NIE używaj `plt.show()`. Twoim zadaniem jest tylko stworzenie obiektów figur.
+7.  Każdą stworzoną figurę (`fig`) MUSISZ dodać do listy o nazwie `figures_to_embed`.
+8.  Twoja odpowiedź musi zawierać TYLKO i WYŁĄCZNIE kod Pythona.
+9.  **Twoja odpowiedź MUSI być obiektem JSON zawierającym jeden klucz: "code", którego wartością jest skrypt Pythona jako string.**
+        """
 
     @staticmethod
     def create_meta_auditor_prompt(source_code: str, autogen_conversation: str, langgraph_log: str, final_code: str, final_report: str) -> str:
@@ -541,7 +601,16 @@ class CodeFixArgs(BaseModel):
 class PackageInstallArgs(BaseModel):
     package_name: str = Field(description="Nazwa pakietu, który należy zainstalować, aby rozwiązać błąd 'ModuleNotFoundError'. Np. 'scikit-learn', 'seaborn'.")
     analysis: str = Field(description="Krótka analiza potwierdzająca, że przyczyną błędu jest brakujący pakiet.")
-    
+
+class ReportSummary(BaseModel):
+    """Przechowuje podsumowanie analityczne w formacie HTML."""
+    summary_html: str = Field(description="Tekst podsumowania w formacie HTML, zawierający tagi takie jak <h2> i <ul>.")
+
+class PlottingCode(BaseModel):
+    """Przechowuje kod Pythona do generowania wizualizacji."""
+    code: str = Field(description="Czysty kod w Pythonie do generowania figur matplotlib.")
+
+
     
 #narzędzia dla langchain agentów    
 @tool(args_schema=CodeFixArgs)
@@ -571,6 +640,16 @@ import pandas as pd
 import datetime
 import logging
 
+
+#--funkcja dla pamieci--
+def intelligent_truncate(text: str, max_len: int) -> str:
+    """Skraca tekst, zachowując jego początek i koniec."""
+    if not isinstance(text, str) or len(text) <= max_len:
+        return text
+    half_len = (max_len - 25) // 2
+    start = text[:half_len]
+    end = text[-half_len:]
+    return f"{start}\n\n[... treść skrócona ...]\n\n{end}"
 
 def extract_python_code(response: str) -> str:
     response = response.strip()
@@ -827,17 +906,20 @@ import traceback
 import uuid
 import json
 import re
+import matplotlib.pyplot as plt
 from typing import TypedDict, List, Callable, Dict, Optional, Union, Any
 import pandas as pd
 import langchain
 from langchain_google_vertexai import ChatVertexAI
 from langchain_anthropic import ChatAnthropic
 from .state import AgentWorkflowState
-from prompts import Langchain_Agents_prompts
+from prompts import LangchainAgentsPrompts
 from tools.utils import *
 from tools.langchain_tools import *
 from prompts import ArchitecturalRule, ArchitecturalRulesManager,ARCHITECTURAL_RULES
 from config import MAX_CORRECTION_ATTEMPTS, PROJECT_ID,LOCATION
+from memory.memory_utils import *
+from memory.memory_models import *
 # --- Definicje węzłów LangGraph ---
 
 def schema_reader_node(state: AgentWorkflowState):
@@ -863,7 +945,7 @@ def code_generator_node(state: AgentWorkflowState):
     CODE_MODEL=state['config']['CODE_MODEL']
     
     llm = ChatAnthropic(model_name=CODE_MODEL, temperature=0.0, max_tokens=2048)
-    prompt = Langchain_Agents_prompts.code_generator(state['plan'], state['available_columns'])
+    prompt = LangchainAgentsPrompts.code_generator(state['plan'], state['available_columns'])
     response = llm.invoke(prompt).content
     code = extract_python_code(response)
     
@@ -946,13 +1028,17 @@ def data_code_executor_node(state: AgentWorkflowState):
     
 def universal_debugger_node(state: AgentWorkflowState):
     print(f"--- WĘZEŁ: INTELIGENTNY DEBUGGER (Błąd w: {state.get('failing_node')}) ---")
+    failing_node_name = state.get('failing_node', 'unknown')
+    
+    
+    
     MAIN_AGENT=state['config']['MAIN_AGENT']
     # llm = ChatAnthropic(model_name=CODE_MODEL, temperature=0.0, max_tokens=2048)
     llm = ChatVertexAI(model_name=MAIN_AGENT,temperature=0.0, project=PROJECT_ID, location=LOCATION)
     tools = [propose_code_fix, request_package_installation]
     llm_with_tools = llm.bind_tools(tools)
-    prompt = Langchain_Agents_prompts.tool_based_debugger()
-    error_context = f"Wadliwy Kod:\n```python\n{state['error_context_code']}\n```\n\nBłąd:\n```\n{state['error_message']}\n```"
+    prompt = LangchainAgentsPrompts.tool_based_debugger(failing_node=failing_node_name)
+    error_context = f"Wadliwy Kontekst:\n```\n{state['error_context_code']}\n```\n\nBłąd:\n```\n{state['error_message']}\n```"
     response = llm_with_tools.invoke(prompt + error_context)
     if not response.tool_calls:
         print("  [BŁĄD DEBUGGERA] Agent nie wybrał żadnego narzędzia. Eskalacja.")
@@ -1090,153 +1176,149 @@ def commit_memory_node(state: AgentWorkflowState) -> Dict[str, Any]:
 
     
     
-def reporting_agent_node(state: AgentWorkflowState):
+def summary_analyst_node(state: AgentWorkflowState) -> Dict[str, str]:
     """
-    Wczytuje dane wejściowe i przetworzone, tworzy ich podsumowania statystyczne,
-    a następnie wywołuje agenta w celu wygenerowania kodu analitycznego.
+    Agent, którego jedynym zadaniem jest analiza i stworzenie podsumowania tekstowego w HTML.
     """
-    print("\n--- WĘZEŁ: AGENT RAPORTUJĄCY (ANALIZA DANYCH I GENEROWANIE KODU) ---")
-    
+    print("--- WĘZEŁ: ANALITYK PODSUMOWANIA ---")
     try:
-        
-        CODE_MODEL=state['config']['CODE_MODEL']
-        
-        # --- NOWY KROK: Wczytanie i analiza danych ---
-        print("  [INFO] Wczytywanie danych do analizy porównawczej...")
+        # Krok 1: Przygotuj dane wejściowe dla promptu
         df_original = pd.read_csv(state['input_path'])
         df_processed = pd.read_csv(state['output_path'])
 
-        # Tworzenie zwięzłych podsumowań tekstowych dla LLM
-        # Używamy io.StringIO, aby przechwycić 'print' z df.info() do stringa
         original_info_buf = io.StringIO()
         df_original.info(buf=original_info_buf)
-        
         processed_info_buf = io.StringIO()
         df_processed.info(buf=processed_info_buf)
 
-        original_summary = f"""
-### Podsumowanie danych ORYGINALNYCH ###
-Pierwsze 3 wiersze:
-{df_original.head(3).to_string()}
+        original_summary = f"Podsumowanie danych ORYGINALNYCH:\n{df_original.describe().to_string()}\n{original_info_buf.getvalue()}"
+        processed_summary = f"Podsumowanie danych PRZETWORZONYCH:\n{df_processed.describe().to_string()}\n{processed_info_buf.getvalue()}"
 
-Informacje o kolumnach:
-{original_info_buf.getvalue()}
-Statystyki (dla kolumn numerycznych):
-{df_original.describe().to_string()}
-"""
-        processed_summary = f"""
-### Podsumowanie danych PRZETWORZONYCH ###
-Pierwsze 3 wiersze:
-{df_processed.head(3).to_string()}
-
-Informacje o kolumnach:
-{processed_info_buf.getvalue()}
-Statystyki (dla kolumn numerycznych):
-{df_processed.describe().to_string()}
-"""
-        print("  [INFO] Podsumowania danych wygenerowane.")
-        # --- KONIEC NOWEGO KROKU ---
-
-        # Krok 2: Utwórz precyzyjny prompt z nowym kontekstem
-        prompt = PromptTemplates.create_reporting_prompt(
+        # === POPRAWKA: Użycie dedykowanego promptu ===
+        prompt = LangchainAgentsPrompts.summary_analyst_prompt(
             plan=state['plan'],
             original_summary=original_summary,
             processed_summary=processed_summary
         )
         
-        # Krok 3: Wywołaj LLM (bez zmian)
-        llm = ChatAnthropic(model_name=CODE_MODEL, temperature=0.0, max_tokens=2048)
-        structured_llm = llm.with_structured_output(GeneratedPythonScript)
-        response_object = structured_llm.invoke(prompt)
-        report_analysis_code = response_object.script_code
+        llm = ChatAnthropic(model_name=state['config']['CODE_MODEL'], temperature=0.0, max_tokens=1024)
+        structured_llm = llm.with_structured_output(ReportSummary)
+        response = structured_llm.invoke(prompt)
         
-        print("  [INFO] Agent-Analityk wygenerował kod analityczny na podstawie danych.")
+        print("  [INFO] Analityk wygenerował podsumowanie HTML.")
+        return {"summary_html": response.summary_html}
         
-        return {"generated_report_code": report_analysis_code}
+    except Exception as e:
+        error_msg = f"Błąd w analityku podsumowania: {traceback.format_exc()}"
+        print(f"  [BŁĄD] {error_msg}")
+        return {"error_message": error_msg, "failing_node": "summary_analyst_node"}
+
+
+def plot_generator_node(state: AgentWorkflowState) -> Dict[str, str]:
+    """
+    Agent, którego jedynym zadaniem jest wygenerowanie KODU do tworzenia wykresów.
+    """
+    print("--- WĘZEŁ: GENERATOR WIZUALIZACJI ---")
+    try:
+        # === POPRAWKA: Użycie dedykowanego promptu ===
+        prompt = LangchainAgentsPrompts.plot_generator_prompt(plan=state['plan'])
+        MAIN_AGENT=state['config']['MAIN_AGENT']
+        # llm = ChatAnthropic(model_name=CODE_MODEL, temperature=0.0, max_tokens=2048)
+        llm = ChatVertexAI(model_name=MAIN_AGENT,temperature=0.0, project=PROJECT_ID, location=LOCATION)
+        # llm = ChatAnthropic(model_name=state['config']['CODE_MODEL'], temperature=0.0, max_tokens=2048)
+        structured_llm = llm.with_structured_output(PlottingCode)
+        response = structured_llm.invoke(prompt)
+        
+        print("  [INFO] Generator stworzył kod do wizualizacji.")
+        return {"plot_generation_code": response.code}
 
     except Exception as e:
-        print(f"  [BŁĄD] Krytyczny błąd w agencie raportującym: {traceback.format_exc()}")
-        return {"generated_report_code": None}
+        error_msg = f"Błąd w generatorze wizualizacji: {traceback.format_exc()}"
+        print(f"  [BŁĄD] {error_msg}")
+        return {
+            "error_message": error_msg,
+            "failing_node": "plot_generator_node",
+            "error_context_code": state.get('plan', 'Brak planu w stanie do analizy.'),
+            "correction_attempts": state.get("correction_attempts", 0) + 1
+        }
 
-def report_executor_node(state: AgentWorkflowState):
-    """
-    Wczytuje zewnętrzny szablon HTML, wykonuje kod analityczny od agenta,
-    a następnie wstawia wyniki do szablonu, tworząc finalny raport.
-    """
-    print("--- WĘZEŁ: WYKONANIE KODU RAPORTU (Z ZEWNĘTRZNEGO SZABLONU) ---")
-    analysis_code = state.get("generated_report_code")
-    
-    if not analysis_code:
-        return {"error_message": "Brak kodu analitycznego do wykonania.", "failing_node": "report_executor"}
 
+def report_composer_node(state: AgentWorkflowState) -> Dict[str, Any]:
+    """
+    Węzeł, który składa podsumowanie i wykresy w finalny raport HTML. Nie używa LLM.
+    """
+    print("--- WĘZEŁ: KOMPOZYTOR RAPORTU ---")
     try:
-        # Krok 1: Zbuduj kompletny, wykonywalny skrypt do wygenerowania "ciała" raportu
-        # Ten skrypt zawiera wszystkie potrzebne importy i funkcje pomocnicze.
-        body_script_to_execute = f"""
-import pandas as pd
-import numpy as np
-import matplotlib.pyplot as plt
-import seaborn as sns
-import base64
-from io import BytesIO
+        summary_html = state.get("summary_html")
+        plot_code = state.get("plot_generation_code")
+        
+        if not summary_html or not plot_code:
+            raise ValueError("Brak podsumowania lub kodu do generowania wykresów w stanie.")
 
-def embed_plot_to_html(figure):
-    \"\"\"Konwertuje figurę matplotlib do stringa base64 do osadzenia w HTML.\"\"\"
-    buffer = BytesIO()
-    figure.savefig(buffer, format='png', bbox_inches='tight')
-    buffer.seek(0)
-    image_png = buffer.getvalue()
-    buffer.close()
-    graphic = base64.b64encode(image_png)
-    graphic = graphic.decode('utf-8')
-    plt.close(figure)
-    return f'<img src="data:image/png;base64,{{graphic}}" alt="Wykres analizy danych" style="max-width: 100%; height: auto;"/>'
-
-# --- Kod wygenerowany przez agenta-analityka ---
-{analysis_code}
-# ---------------------------------------------
-
-# Przygotowanie finalnego "ciała" HTML do wstawienia w szablon
-html_body_content = ""
-if 'summary_text' in locals():
-    html_body_content += "<h2>Podsumowanie</h2>" + summary_text
-if 'figures_to_embed' in locals() and isinstance(figures_to_embed, list):
-    html_body_content += "<h2>Wizualizacje</h2>"
-    for fig in figures_to_embed:
-        html_body_content += embed_plot_to_html(fig)
-"""
-        # Krok 2: Przygotuj środowisko i wykonaj powyższy skrypt, aby uzyskać treść raportu
-        print("  [INFO] Wykonywanie kodu analitycznego w celu wygenerowania treści raportu...")
+        # 1. Przygotuj środowisko wykonawcze dla kodu z wykresami
         exec_scope = {
+            'pd': pd,
+            'plt': plt,
             'df_original': pd.read_csv(state['input_path']),
             'df_processed': pd.read_csv(state['output_path']),
+            'figures_to_embed': []
         }
-        exec(body_script_to_execute, exec_scope)
-        generated_html_body = exec_scope['html_body_content']
 
-        # Krok 3: Wczytaj zewnętrzny szablon HTML
-        print("  [INFO] Wczytywanie szablonu z pliku report_template.html...")
-        with open("report_template.html", "r", encoding="utf-8") as f:
-            template = f.read()
+        # 2. Wykonaj kod od agenta, aby wygenerować obiekty figur
+        exec(plot_code, exec_scope)
+        figures = exec_scope['figures_to_embed']
+        print(f"  [INFO] Wykonano kod i wygenerowano {len(figures)} wykres(y).")
 
-        # Krok 4: Wstaw wygenerowaną treść do szablonu i zapisz finalny raport
-        final_html = template.format(generated_html_body=generated_html_body)
+        # 3. Skonwertuj figury na tagi <img> z base64
+        figures_html = ""
+        for i, fig in enumerate(figures):
+            figures_html += f"<h3>Wykres {i+1}</h3>{embed_plot_to_html(fig)}"
+
+        # 4. Złóż finalny raport HTML
+        final_html = f"""
+        <!DOCTYPE html>
+        <html lang="pl">
+        <head>
+            <meta charset="UTF-8">
+            <title>Raport z Analizy Danych</title>
+            <style>
+                body {{ font-family: sans-serif; margin: 2em; background-color: #f9f9f9; }}
+                .container {{ max-width: 1000px; margin: auto; background: #fff; padding: 2em; box-shadow: 0 0 10px rgba(0,0,0,0.1); }}
+                h1, h2, h3 {{ color: #2c3e50; border-bottom: 2px solid #3498db; padding-bottom: 5px;}}
+                img {{ max-width: 100%; height: auto; border: 1px solid #ddd; padding: 4px; border-radius: 4px; margin-top: 1em; }}
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <h1>Raport z Przetwarzania Danych</h1>
+                {summary_html}
+                <h2>Wizualizacje</h2>
+                {figures_html}
+            </div>
+        </body>
+        </html>
+        """
+
+        # 5. Zapisz plik
         with open(state['report_output_path'], 'w', encoding='utf-8') as f:
             f.write(final_html)
+            
+        print(f"✅ Raport został pomyślnie wygenerowany w {state['report_output_path']}")
+        return {}
 
-        print(f"  [INFO] Raport HTML został pomyślnie zapisany w: {state['report_output_path']}")
-        return {"error_message": None} # Sukces
-
-    except Exception:
-        error_traceback = traceback.format_exc()
-        print(f"  [BŁĄD] Wystąpił błąd podczas wykonywania skryptu raportu:\n{error_traceback}")
-        # Przekazujemy do debuggera tylko ten fragment, który zawiódł (kod od agenta)
+    except Exception as e:
+        error_msg = f"Błąd w kompozytorze raportu: {traceback.format_exc()}"
+        print(f"  [BŁĄD] {error_msg}")
         return {
-            "failing_node": "report_executor", 
-            "error_message": error_traceback, 
-            "error_context_code": analysis_code, 
-            "correction_attempts": state.get('correction_attempts', 0) + 1
+            "error_message": error_msg, 
+            "failing_node": "report_composer_node",
+            "error_context_code": state.get("plot_generation_code", "Brak kodu do analizy."),
+            "correction_attempts": state.get("correction_attempts", 0) + 1
         }
+    
+    
+    
+    
 
     
 def sync_report_code_node(state: AgentWorkflowState):
@@ -1275,7 +1357,7 @@ def meta_auditor_node(state: AgentWorkflowState):
         except Exception: pass
         
         llm = ChatAnthropic(model_name=CRITIC_MODEL, temperature=0.0, max_tokens=2048)
-        prompt = Langchain_Agents_prompts.create_meta_auditor_prompt(
+        prompt = LangchainAgentsPrompts.create_meta_auditor_prompt(
             source_code=state['source_code'], autogen_conversation=state['autogen_log'],
             langgraph_log=state['langgraph_log'], final_code=state.get('generated_code', 'Brak kodu'),
             final_report=final_report_content
@@ -1320,7 +1402,7 @@ Ostatni kod, który zawiódł:
 Pełny traceback ostatniego błędu:
 {state.get('error_message', 'Brak błędu.')}
 """
-    file_name = f"human_escalation_report_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+    file_name = f"reports/human_escalation_report_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
     with open(file_name, "w", encoding="utf-8") as f: f.write(report_content)
     print(f"  [INFO] Raport dla człowieka został zapisany w pliku: {file_name}")
     return {}
@@ -1536,6 +1618,13 @@ class MetaInsightMemory(BaseModel):
 
 --- FILE: memory/memory_utils.py ---
 
+from typing import TypedDict, List, Callable, Dict, Optional, Union, Any
+import vertexai
+import langchain
+from langchain_google_vertexai import ChatVertexAI
+from langchain_anthropic import ChatAnthropic
+from tools.utils import intelligent_truncate
+from config import MAIN_AGENT,LOCATION,PROJECT_ID,CRITIC_MODEL
 #--narzedzie do przetwarzania info dla pamieci dlugotrwalej, llm agent uzywa llm!!
 def distill_memory_content(failing_code: str, error_traceback: str, debugger_analysis: str, corrected_code: str) -> dict:
     """Używa LLM do 'przedestylowania' surowych danych o błędzie i jego naprawie do zwięzłego, ustrukturyzowanego formatu."""
@@ -1544,7 +1633,7 @@ def distill_memory_content(failing_code: str, error_traceback: str, debugger_ana
     prompt_template = f"""
     Persona: Jesteś starszym inżynierem oprogramowania, który pisze zwięzłe post-mortemy do wewnętrznej bazy wiedzy. Twoim celem jest stworzenie notatki, która będzie maksymalnie użyteczna dla innych agentów w przyszłości.
     Przeanalizuj poniższy kontekst i wyciągnij z niego kluczowe, gotowe do użycia wnioski.
-    Kontekst:
+    Kontekst:888888888888888
     [WADLIWY KOD]: {failing_code}
     [PEŁNY BŁĄD]: {error_traceback}
     [ANALIZA PROBLEMU]: {debugger_analysis}

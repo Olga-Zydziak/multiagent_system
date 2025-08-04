@@ -19,3 +19,6 @@ class AgentWorkflowState(TypedDict):
     error_record_id: Optional[str]
     memory_client: MemoryBankClient
     pending_fix_session: Optional[Dict[str, Any]]
+    generated_code: str # Dla głównego kodu
+    summary_html: str # Wynik z summary_analyst
+    plot_generation_code: str # Wynik z plot_generator

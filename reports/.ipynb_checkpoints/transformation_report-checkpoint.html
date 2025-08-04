@@ -1,0 +1,49 @@
+
+        <!DOCTYPE html>
+        <html lang="pl">
+        <head>
+            <meta charset="UTF-8">
+            <title>Raport z Analizy Danych</title>
+            <style>
+                body { font-family: sans-serif; margin: 2em; background-color: #f9f9f9; }
+                .container { max-width: 1000px; margin: auto; background: #fff; padding: 2em; box-shadow: 0 0 10px rgba(0,0,0,0.1); }
+                h1, h2, h3 { color: #2c3e50; border-bottom: 2px solid #3498db; padding-bottom: 5px;}
+                img { max-width: 100%; height: auto; border: 1px solid #ddd; padding: 4px; border-radius: 4px; margin-top: 1em; }
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <h1>Raport z Przetwarzania Danych</h1>
+                <h2>Podsumowanie Transformacji Danych Transakcyjnych</h2>
+
+<h3>Kluczowe Korzyści z Transformacji</h3>
+
+<ul>
+<li><strong>Brak brakujących danych:</strong> Wszystkie 50,000 rekordów zachowało pełną integralność - żadne dane nie zostały utracone podczas procesu transformacji</li>
+<li><strong>Eliminacja wartości odstających:</strong> Zastosowano metodę kwantyli (1-99 percentyl) dla kluczowych zmiennych numerycznych, co zapewniło stabilność modeli predykcyjnych</li>
+<li><strong>Znaczące wzbogacenie cech:</strong> Liczba kolumn wzrosła z 21 do 37 (+76%), dzięki inżynierii cech i kodowaniu kategorycznemu</li>
+<li><strong>Standaryzacja danych:</strong> Wszystkie cechy numeryczne zostały przeskalowane (średnia ≈ 0, odchylenie standardowe = 1), co poprawia wydajność algorytmów ML</li>
+</ul>
+
+<h3>Szczegóły Transformacji</h3>
+
+<ul>
+<li><strong>Nowe cechy czasowe:</strong> Dodano 3 cechy ekstraktowane z timestamp (godzina, dzień tygodnia, dzień miesiąca)</li>
+<li><strong>Cechy biznesowe:</strong> Utworzono 2 wskaźniki finansowe (stosunek kwoty do salda, odchylenie od średniej 7-dniowej)</li>
+<li><strong>Kodowanie kategoryczne:</strong> 19 nowych kolumn binarnych z One-Hot Encoding dla zmiennych kategorycznych</li>
+<li><strong>Optymalizacja pamięci:</strong> Redukcja zużycia pamięci z 8.0+ MB do 7.8 MB mimo zwiększenia liczby kolumn</li>
+</ul>
+
+<h3>Gotowość do Modelowania</h3>
+
+<ul>
+<li><strong>Jakość danych:</strong> 100% kompletność danych, brak wartości NaN</li>
+<li><strong>Rozkład klasy docelowej:</strong> Zachowano oryginalny rozkład Fraud_Label (32.1% przypadków fraudu)</li>
+<li><strong>Przygotowanie do ML:</strong> Dane gotowe do podziału treningowo-testowego i modelowania klasyfikacyjnego</li>
+</ul>
+                <h2>Wizualizacje</h2>
+                
+            </div>
+        </body>
+        </html>
+        

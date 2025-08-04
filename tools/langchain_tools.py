@@ -21,7 +21,16 @@ class CodeFixArgs(BaseModel):
 class PackageInstallArgs(BaseModel):
     package_name: str = Field(description="Nazwa pakietu, który należy zainstalować, aby rozwiązać błąd 'ModuleNotFoundError'. Np. 'scikit-learn', 'seaborn'.")
     analysis: str = Field(description="Krótka analiza potwierdzająca, że przyczyną błędu jest brakujący pakiet.")
-    
+
+class ReportSummary(BaseModel):
+    """Przechowuje podsumowanie analityczne w formacie HTML."""
+    summary_html: str = Field(description="Tekst podsumowania w formacie HTML, zawierający tagi takie jak <h2> i <ul>.")
+
+class PlottingCode(BaseModel):
+    """Przechowuje kod Pythona do generowania wizualizacji."""
+    code: str = Field(description="Czysty kod w Pythonie do generowania figur matplotlib.")
+
+
     
 #narzędzia dla langchain agentów    
 @tool(args_schema=CodeFixArgs)

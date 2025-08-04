@@ -1,3 +1,10 @@
+from typing import TypedDict, List, Callable, Dict, Optional, Union, Any
+import vertexai
+import langchain
+from langchain_google_vertexai import ChatVertexAI
+from langchain_anthropic import ChatAnthropic
+from tools.utils import intelligent_truncate
+from config import MAIN_AGENT,LOCATION,PROJECT_ID,CRITIC_MODEL
 #--narzedzie do przetwarzania info dla pamieci dlugotrwalej, llm agent uzywa llm!!
 def distill_memory_content(failing_code: str, error_traceback: str, debugger_analysis: str, corrected_code: str) -> dict:
     """Używa LLM do 'przedestylowania' surowych danych o błędzie i jego naprawie do zwięzłego, ustrukturyzowanego formatu."""
@@ -6,7 +13,7 @@ def distill_memory_content(failing_code: str, error_traceback: str, debugger_ana
     prompt_template = f"""
     Persona: Jesteś starszym inżynierem oprogramowania, który pisze zwięzłe post-mortemy do wewnętrznej bazy wiedzy. Twoim celem jest stworzenie notatki, która będzie maksymalnie użyteczna dla innych agentów w przyszłości.
     Przeanalizuj poniższy kontekst i wyciągnij z niego kluczowe, gotowe do użycia wnioski.
-    Kontekst:
+    Kontekst:888888888888888
     [WADLIWY KOD]: {failing_code}
     [PEŁNY BŁĄD]: {error_traceback}
     [ANALIZA PROBLEMU]: {debugger_analysis}

@@ -7,17 +7,20 @@ import traceback
 import uuid
 import json
 import re
+import matplotlib.pyplot as plt
 from typing import TypedDict, List, Callable, Dict, Optional, Union, Any
 import pandas as pd
 import langchain
 from langchain_google_vertexai import ChatVertexAI
 from langchain_anthropic import ChatAnthropic
 from .state import AgentWorkflowState
-from prompts import Langchain_Agents_prompts
+from prompts import LangchainAgentsPrompts
 from tools.utils import *
 from tools.langchain_tools import *
 from prompts import ArchitecturalRule, ArchitecturalRulesManager,ARCHITECTURAL_RULES
 from config import MAX_CORRECTION_ATTEMPTS, PROJECT_ID,LOCATION
+from memory.memory_utils import *
+from memory.memory_models import *
 # --- Definicje węzłów LangGraph ---
 
 def schema_reader_node(state: AgentWorkflowState):
@@ -43,7 +46,7 @@ def code_generator_node(state: AgentWorkflowState):
     CODE_MODEL=state['config']['CODE_MODEL']
     
     llm = ChatAnthropic(model_name=CODE_MODEL, temperature=0.0, max_tokens=2048)
-    prompt = Langchain_Agents_prompts.code_generator(state['plan'], state['available_columns'])
+    prompt = LangchainAgentsPrompts.code_generator(state['plan'], state['available_columns'])
     response = llm.invoke(prompt).content
     code = extract_python_code(response)
     
@@ -126,13 +129,17 @@ def data_code_executor_node(state: AgentWorkflowState):
     
 def universal_debugger_node(state: AgentWorkflowState):
     print(f"--- WĘZEŁ: INTELIGENTNY DEBUGGER (Błąd w: {state.get('failing_node')}) ---")
+    failing_node_name = state.get('failing_node', 'unknown')
+    
+    
+    
     MAIN_AGENT=state['config']['MAIN_AGENT']
     # llm = ChatAnthropic(model_name=CODE_MODEL, temperature=0.0, max_tokens=2048)
     llm = ChatVertexAI(model_name=MAIN_AGENT,temperature=0.0, project=PROJECT_ID, location=LOCATION)
     tools = [propose_code_fix, request_package_installation]
     llm_with_tools = llm.bind_tools(tools)
-    prompt = Langchain_Agents_prompts.tool_based_debugger()
-    error_context = f"Wadliwy Kod:\n```python\n{state['error_context_code']}\n```\n\nBłąd:\n```\n{state['error_message']}\n```"
+    prompt = LangchainAgentsPrompts.tool_based_debugger(failing_node=failing_node_name)
+    error_context = f"Wadliwy Kontekst:\n```\n{state['error_context_code']}\n```\n\nBłąd:\n```\n{state['error_message']}\n```"
     response = llm_with_tools.invoke(prompt + error_context)
     if not response.tool_calls:
         print("  [BŁĄD DEBUGGERA] Agent nie wybrał żadnego narzędzia. Eskalacja.")
@@ -152,6 +159,8 @@ def apply_code_fix_node(state: AgentWorkflowState):
     
     analysis = state.get("debugger_analysis", "")
     corrected_code = state.get("tool_args", {}).get("corrected_code")
+    failing_node = state.get("failing_node")
+    
     
     if not corrected_code:
         print("  [OSTRZEŻENIE] Debugger nie dostarczył kodu. Wymuszam jego wygenerowanie...")
@@ -180,7 +189,22 @@ def apply_code_fix_node(state: AgentWorkflowState):
         
     #--pamięć długotrwała info dla pamieci--
     
-    
+    update = {
+        "error_message": None, 
+        "tool_choice": None, 
+        "tool_args": None
+    }
+
+    if failing_node == "plot_generator_node":
+        print("  [INFO] Aplikowanie poprawki do kodu generującego wykresy.")
+        update["plot_generation_code"] = corrected_code
+    elif failing_node == "summary_analyst_node":
+        print("  [INFO] Aplikowanie poprawki do podsumowania HTML.")
+        update["summary_html"] = corrected_code
+    else: # Domyślnie traktuj jako główny kod
+        print("  [INFO] Aplikowanie poprawki do głównego kodu przetwarzania danych.")
+        update["generated_code"] = corrected_code
+
     session = state.get('pending_fix_session')
     if not session:
         # Sytuacja awaryjna, nie powinno się zdarzyć w normalnym przepływie
@@ -270,153 +294,151 @@ def commit_memory_node(state: AgentWorkflowState) -> Dict[str, Any]:
 
     
     
-def reporting_agent_node(state: AgentWorkflowState):
+def summary_analyst_node(state: AgentWorkflowState) -> Dict[str, str]:
     """
-    Wczytuje dane wejściowe i przetworzone, tworzy ich podsumowania statystyczne,
-    a następnie wywołuje agenta w celu wygenerowania kodu analitycznego.
+    Agent, którego jedynym zadaniem jest analiza i stworzenie podsumowania tekstowego w HTML.
     """
-    print("\n--- WĘZEŁ: AGENT RAPORTUJĄCY (ANALIZA DANYCH I GENEROWANIE KODU) ---")
-    
+    print("--- WĘZEŁ: ANALITYK PODSUMOWANIA ---")
     try:
-        
-        CODE_MODEL=state['config']['CODE_MODEL']
-        
-        # --- NOWY KROK: Wczytanie i analiza danych ---
-        print("  [INFO] Wczytywanie danych do analizy porównawczej...")
+        # Krok 1: Przygotuj dane wejściowe dla promptu
         df_original = pd.read_csv(state['input_path'])
         df_processed = pd.read_csv(state['output_path'])
 
-        # Tworzenie zwięzłych podsumowań tekstowych dla LLM
-        # Używamy io.StringIO, aby przechwycić 'print' z df.info() do stringa
         original_info_buf = io.StringIO()
         df_original.info(buf=original_info_buf)
-        
         processed_info_buf = io.StringIO()
         df_processed.info(buf=processed_info_buf)
 
-        original_summary = f"""
-### Podsumowanie danych ORYGINALNYCH ###
-Pierwsze 3 wiersze:
-{df_original.head(3).to_string()}
+        original_summary = f"Podsumowanie danych ORYGINALNYCH:\n{df_original.describe().to_string()}\n{original_info_buf.getvalue()}"
+        processed_summary = f"Podsumowanie danych PRZETWORZONYCH:\n{df_processed.describe().to_string()}\n{processed_info_buf.getvalue()}"
 
-Informacje o kolumnach:
-{original_info_buf.getvalue()}
-Statystyki (dla kolumn numerycznych):
-{df_original.describe().to_string()}
-"""
-        processed_summary = f"""
-### Podsumowanie danych PRZETWORZONYCH ###
-Pierwsze 3 wiersze:
-{df_processed.head(3).to_string()}
-
-Informacje o kolumnach:
-{processed_info_buf.getvalue()}
-Statystyki (dla kolumn numerycznych):
-{df_processed.describe().to_string()}
-"""
-        print("  [INFO] Podsumowania danych wygenerowane.")
-        # --- KONIEC NOWEGO KROKU ---
-
-        # Krok 2: Utwórz precyzyjny prompt z nowym kontekstem
-        prompt = PromptTemplates.create_reporting_prompt(
+        # === POPRAWKA: Użycie dedykowanego promptu ===
+        prompt = LangchainAgentsPrompts.summary_analyst_prompt(
             plan=state['plan'],
             original_summary=original_summary,
             processed_summary=processed_summary
         )
         
-        # Krok 3: Wywołaj LLM (bez zmian)
-        llm = ChatAnthropic(model_name=CODE_MODEL, temperature=0.0, max_tokens=2048)
-        structured_llm = llm.with_structured_output(GeneratedPythonScript)
-        response_object = structured_llm.invoke(prompt)
-        report_analysis_code = response_object.script_code
+        llm = ChatAnthropic(model_name=state['config']['CODE_MODEL'], temperature=0.0, max_tokens=1024)
+        structured_llm = llm.with_structured_output(ReportSummary)
+        response = structured_llm.invoke(prompt)
         
-        print("  [INFO] Agent-Analityk wygenerował kod analityczny na podstawie danych.")
+        print("  [INFO] Analityk wygenerował podsumowanie HTML.")
+        return {"summary_html": response.summary_html}
         
-        return {"generated_report_code": report_analysis_code}
+    except Exception as e:
+        error_msg = f"Błąd w analityku podsumowania: {traceback.format_exc()}"
+        print(f"  [BŁĄD] {error_msg}")
+        return {"error_message": error_msg, "failing_node": "summary_analyst_node"}
+
+
+def plot_generator_node(state: AgentWorkflowState) -> Dict[str, str]:
+    """
+    Agent, którego jedynym zadaniem jest wygenerowanie KODU do tworzenia wykresów.
+    """
+    print("--- WĘZEŁ: GENERATOR WIZUALIZACJI ---")
+    try:
+        # === POPRAWKA: Użycie dedykowanego promptu ===
+        prompt = LangchainAgentsPrompts.plot_generator_prompt(plan=state['plan'])
+        MAIN_AGENT=state['config']['MAIN_AGENT']
+        # llm = ChatAnthropic(model_name=CODE_MODEL, temperature=0.0, max_tokens=2048)
+        llm = ChatVertexAI(model_name=MAIN_AGENT,temperature=0.0, project=PROJECT_ID, location=LOCATION)
+        # llm = ChatAnthropic(model_name=state['config']['CODE_MODEL'], temperature=0.0, max_tokens=2048)
+        structured_llm = llm.with_structured_output(PlottingCode)
+        response = structured_llm.invoke(prompt)
+        cleaned_code = extract_python_code(response.code)
+        
+        print("  [INFO] Generator stworzył kod do wizualizacji.")
+        return {"plot_generation_code": cleaned_code}
+        
 
     except Exception as e:
-        print(f"  [BŁĄD] Krytyczny błąd w agencie raportującym: {traceback.format_exc()}")
-        return {"generated_report_code": None}
+        error_msg = f"Błąd w generatorze wizualizacji: {traceback.format_exc()}"
+        print(f"  [BŁĄD] {error_msg}")
+        return {
+            "error_message": error_msg,
+            "failing_node": "plot_generator_node",
+            "error_context_code": state.get('plan', 'Brak planu w stanie do analizy.'),
+            "correction_attempts": state.get("correction_attempts", 0) + 1
+        }
 
-def report_executor_node(state: AgentWorkflowState):
-    """
-    Wczytuje zewnętrzny szablon HTML, wykonuje kod analityczny od agenta,
-    a następnie wstawia wyniki do szablonu, tworząc finalny raport.
-    """
-    print("--- WĘZEŁ: WYKONANIE KODU RAPORTU (Z ZEWNĘTRZNEGO SZABLONU) ---")
-    analysis_code = state.get("generated_report_code")
-    
-    if not analysis_code:
-        return {"error_message": "Brak kodu analitycznego do wykonania.", "failing_node": "report_executor"}
 
+def report_composer_node(state: AgentWorkflowState) -> Dict[str, Any]:
+    """
+    Węzeł, który składa podsumowanie i wykresy w finalny raport HTML. Nie używa LLM.
+    """
+    print("--- WĘZEŁ: KOMPOZYTOR RAPORTU ---")
     try:
-        # Krok 1: Zbuduj kompletny, wykonywalny skrypt do wygenerowania "ciała" raportu
-        # Ten skrypt zawiera wszystkie potrzebne importy i funkcje pomocnicze.
-        body_script_to_execute = f"""
-import pandas as pd
-import numpy as np
-import matplotlib.pyplot as plt
-import seaborn as sns
-import base64
-from io import BytesIO
+        summary_html = state.get("summary_html")
+        plot_code = state.get("plot_generation_code")
+        
+        if not summary_html or not plot_code:
+            raise ValueError("Brak podsumowania lub kodu do generowania wykresów w stanie.")
 
-def embed_plot_to_html(figure):
-    \"\"\"Konwertuje figurę matplotlib do stringa base64 do osadzenia w HTML.\"\"\"
-    buffer = BytesIO()
-    figure.savefig(buffer, format='png', bbox_inches='tight')
-    buffer.seek(0)
-    image_png = buffer.getvalue()
-    buffer.close()
-    graphic = base64.b64encode(image_png)
-    graphic = graphic.decode('utf-8')
-    plt.close(figure)
-    return f'<img src="data:image/png;base64,{{graphic}}" alt="Wykres analizy danych" style="max-width: 100%; height: auto;"/>'
-
-# --- Kod wygenerowany przez agenta-analityka ---
-{analysis_code}
-# ---------------------------------------------
-
-# Przygotowanie finalnego "ciała" HTML do wstawienia w szablon
-html_body_content = ""
-if 'summary_text' in locals():
-    html_body_content += "<h2>Podsumowanie</h2>" + summary_text
-if 'figures_to_embed' in locals() and isinstance(figures_to_embed, list):
-    html_body_content += "<h2>Wizualizacje</h2>"
-    for fig in figures_to_embed:
-        html_body_content += embed_plot_to_html(fig)
-"""
-        # Krok 2: Przygotuj środowisko i wykonaj powyższy skrypt, aby uzyskać treść raportu
-        print("  [INFO] Wykonywanie kodu analitycznego w celu wygenerowania treści raportu...")
+        # 1. Przygotuj środowisko wykonawcze dla kodu z wykresami
         exec_scope = {
+            'pd': pd,
+            'plt': plt,
             'df_original': pd.read_csv(state['input_path']),
             'df_processed': pd.read_csv(state['output_path']),
+            'figures_to_embed': []
         }
-        exec(body_script_to_execute, exec_scope)
-        generated_html_body = exec_scope['html_body_content']
 
-        # Krok 3: Wczytaj zewnętrzny szablon HTML
-        print("  [INFO] Wczytywanie szablonu z pliku report_template.html...")
-        with open("report_template.html", "r", encoding="utf-8") as f:
-            template = f.read()
+        # 2. Wykonaj kod od agenta, aby wygenerować obiekty figur
+        exec(plot_code, exec_scope)
+        figures = exec_scope['figures_to_embed']
+        print(f"  [INFO] Wykonano kod i wygenerowano {len(figures)} wykres(y).")
 
-        # Krok 4: Wstaw wygenerowaną treść do szablonu i zapisz finalny raport
-        final_html = template.format(generated_html_body=generated_html_body)
+        # 3. Skonwertuj figury na tagi <img> z base64
+        figures_html = ""
+        for i, fig in enumerate(figures):
+            figures_html += f"<h3>Wykres {i+1}</h3>{embed_plot_to_html(fig)}"
+
+        # 4. Złóż finalny raport HTML
+        final_html = f"""
+        <!DOCTYPE html>
+        <html lang="pl">
+        <head>
+            <meta charset="UTF-8">
+            <title>Raport z Analizy Danych</title>
+            <style>
+                body {{ font-family: sans-serif; margin: 2em; background-color: #f9f9f9; }}
+                .container {{ max-width: 1000px; margin: auto; background: #fff; padding: 2em; box-shadow: 0 0 10px rgba(0,0,0,0.1); }}
+                h1, h2, h3 {{ color: #2c3e50; border-bottom: 2px solid #3498db; padding-bottom: 5px;}}
+                img {{ max-width: 100%; height: auto; border: 1px solid #ddd; padding: 4px; border-radius: 4px; margin-top: 1em; }}
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <h1>Raport z Przetwarzania Danych</h1>
+                {summary_html}
+                <h2>Wizualizacje</h2>
+                {figures_html}
+            </div>
+        </body>
+        </html>
+        """
+
+        # 5. Zapisz plik
         with open(state['report_output_path'], 'w', encoding='utf-8') as f:
             f.write(final_html)
+            
+        print(f"✅ Raport został pomyślnie wygenerowany w {state['report_output_path']}")
+        return {}
 
-        print(f"  [INFO] Raport HTML został pomyślnie zapisany w: {state['report_output_path']}")
-        return {"error_message": None} # Sukces
-
-    except Exception:
-        error_traceback = traceback.format_exc()
-        print(f"  [BŁĄD] Wystąpił błąd podczas wykonywania skryptu raportu:\n{error_traceback}")
-        # Przekazujemy do debuggera tylko ten fragment, który zawiódł (kod od agenta)
+    except Exception as e:
+        error_msg = f"Błąd w kompozytorze raportu: {traceback.format_exc()}"
+        print(f"  [BŁĄD] {error_msg}")
         return {
-            "failing_node": "report_executor", 
-            "error_message": error_traceback, 
-            "error_context_code": analysis_code, 
-            "correction_attempts": state.get('correction_attempts', 0) + 1
+            "error_message": error_msg, 
+            "failing_node": "report_composer_node",
+            "error_context_code": state.get("plot_generation_code", "Brak kodu do analizy."),
+            "correction_attempts": state.get("correction_attempts", 0) + 1
         }
+    
+    
+    
+    
 
     
 def sync_report_code_node(state: AgentWorkflowState):
@@ -455,7 +477,7 @@ def meta_auditor_node(state: AgentWorkflowState):
         except Exception: pass
         
         llm = ChatAnthropic(model_name=CRITIC_MODEL, temperature=0.0, max_tokens=2048)
-        prompt = Langchain_Agents_prompts.create_meta_auditor_prompt(
+        prompt = LangchainAgentsPrompts.create_meta_auditor_prompt(
             source_code=state['source_code'], autogen_conversation=state['autogen_log'],
             langgraph_log=state['langgraph_log'], final_code=state.get('generated_code', 'Brak kodu'),
             final_report=final_report_content
@@ -500,7 +522,7 @@ Ostatni kod, który zawiódł:
 Pełny traceback ostatniego błędu:
 {state.get('error_message', 'Brak błędu.')}
 """
-    file_name = f"human_escalation_report_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+    file_name = f"reports/human_escalation_report_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
     with open(file_name, "w", encoding="utf-8") as f: f.write(report_content)
     print(f"  [INFO] Raport dla człowieka został zapisany w pliku: {file_name}")
     return {}

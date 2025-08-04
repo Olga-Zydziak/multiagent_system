@@ -13,6 +13,16 @@ import datetime
 import logging
 
 
+#--funkcja dla pamieci--
+def intelligent_truncate(text: str, max_len: int) -> str:
+    """Skraca tekst, zachowując jego początek i koniec."""
+    if not isinstance(text, str) or len(text) <= max_len:
+        return text
+    half_len = (max_len - 25) // 2
+    start = text[:half_len]
+    end = text[-half_len:]
+    return f"{start}\n\n[... treść skrócona ...]\n\n{end}"
+
 def extract_python_code(response: str) -> str:
     response = response.strip()
     match = re.search(r'```python\n(.*?)\n```', response, re.DOTALL)
