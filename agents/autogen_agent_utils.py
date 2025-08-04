@@ -11,7 +11,7 @@ from autogen.agentchat.contrib.multimodal_conversable_agent import MultimodalCon
 
 
 #FUNKCJA CHATU GRUPOWEGO-WYMYŚLANIE PLANU
-def run_autogen_planning_phase(input_path: str,trigger_agent: TriggerAgent,planner_agent: PlannerAgent, critic_agent: CriticAgent, manager_agent_config:Dict,inspiration_prompt: str = "") -> Optional[str]:
+def run_autogen_planning_phase(input_path: str,trigger_agent: TriggerAgent,planner_agent: PlannerAgent, critic_agent: CriticAgent, manager_agent_config:Dict,inspiration_prompt: str = "",active_policies: Optional[str] = None) -> Optional[str]:
     """
     Uruchamia fazę planowania z agentami AutoGen i zwraca finalny plan.
     """
@@ -23,13 +23,19 @@ def run_autogen_planning_phase(input_path: str,trigger_agent: TriggerAgent,plann
         df_summary = pd.read_csv(input_path, nrows=5)
         data_preview = f"Oto podgląd danych:\n\nKolumny:\n{df_summary.columns.tolist()}\n\nPierwsze 5 wierszy:\n{df_summary.to_string()}"
         
+        
+        if active_policies:
+            print("INFO: Dołączam aktywne polityki systemowe do fazy planowania.")
+            data_preview += "\n\n" + active_policies
+        
+        
         if inspiration_prompt:
             print("INFO: Dołączam inspiracje z pamięci do fazy planowania.")
             data_preview += "\n\n" + inspiration_prompt
         
     except Exception as e:
         logging.error(f"Nie można wczytać pliku wejściowego {input_path}: {e}")
-        return None
+        return None, ""
     
     
     
@@ -39,7 +45,7 @@ def run_autogen_planning_phase(input_path: str,trigger_agent: TriggerAgent,plann
        max_consecutive_auto_reply=10,
        is_termination_msg=lambda x: x.get("content", "").rstrip().endswith("TERMINATE"),
        code_execution_config=False,
-       system_message="Zarządzasz procesem. Przekaż podgląd danych do TriggerAgenta, a następnie moderuj dyskusję między Plannerem a Krytykiem. Jeśli w wiadomości są inspiracje z przeszłości, przekaż je Plannerowi."
+       system_message="Zarządzasz procesem. Przekaż podgląd danych do TriggerAgenta. Następnie moderuj dyskusję między Plannerem a Krytykiem. Jeśli w wiadomości znajdują się 'AKTYWNE POLITYKI SYSTEMOWE' lub 'INSPIRACJE Z POPRZEDNICH URUCHOMIEŃ', upewnij się, że przekażesz je w całości Plannerowi."
     )
 
     def custom_speaker_selection_func(last_speaker: Agent, groupchat: autogen.GroupChat):

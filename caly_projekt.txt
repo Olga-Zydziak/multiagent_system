@@ -189,6 +189,10 @@ if __name__ == "__main__":
     except Exception as e:
         print(f"OSTRZEŻENIE: Nie udało się pobrać inspiracji z pamięci: {e}")
 
+        
+        
+    active_policies = get_active_policies_from_memory(memory_client, dataset_signature)    
+    
     # --- Krok 1: Faza planowania (AutoGen) ---
     final_plan, autogen_log = run_autogen_planning_phase(
         input_path=INPUT_FILE_PATH, 
@@ -196,7 +200,8 @@ if __name__ == "__main__":
         trigger_agent=trigger_agent,
         planner_agent=planner_agent,
         critic_agent=critic_agent,
-        manager_agent_config=main_agent_configuration
+        manager_agent_config=main_agent_configuration,
+        active_policies=active_policies
     )
     save_autogen_conversation_log(log_content=autogen_log, file_path="reports/autogen_planning_conversation.log")
 
@@ -305,7 +310,8 @@ if __name__ == "__main__":
             "memory_client": memory_client,
             "run_id": run_id,
             "dataset_signature": dataset_signature,
-            "pending_fix_session": None
+            "pending_fix_session": None,
+            "active_policies": active_policies
         }
         
         langgraph_log = ""
@@ -463,8 +469,15 @@ Gdy otrzymujesz zadanie, postępuj według następującego schematu:
         return LangchainAgentsPrompts.SYSTEM_PROMPT_NEXUS_ENGINEER+ task_prompt
     
     @staticmethod
-    def tool_based_debugger(failing_node: str) -> str:
-        return LangchainAgentsPrompts.SYSTEM_PROMPT_NEXUS_ENGINEER+ f"""Jesteś 'Głównym Inżynierem Jakości Kodu'. Twoim zadaniem jest nie tylko naprawienie zgłoszonego błędu, ale zapewnienie, że kod będzie działał poprawnie.
+    def tool_based_debugger(failing_node: str,active_policies: Optional[str] = None) -> str:
+        
+        policy_section = ""
+        if active_policies:
+            policy_section = active_policies
+        
+        return LangchainAgentsPrompts.SYSTEM_PROMPT_NEXUS_ENGINEER+ f"""Jesteś 'Głównym Inżynierem Jakości Kodu'.
+        {policy_section}
+        Twoim zadaniem jest nie tylko naprawienie zgłoszonego błędu, ale zapewnienie, że kod będzie działał poprawnie.
         --- KONTEKST ZADANIA ---
 Błąd wystąpił w węźle o nazwie: '{failing_node}'. Twoje zadanie zależy od tego kontekstu:
 - Jeśli `failing_node` to 'data_code_executor' lub 'architectural_validator', Twoim zadaniem jest naprawa GŁÓWNEGO skryptu do przetwarzania danych.
@@ -674,7 +687,7 @@ from typing import TypedDict, List, Callable, Dict, Optional, Union, Any
 import pandas as pd
 import datetime
 import logging
-
+from memory.memory_models import MemoryType
 
 #--funkcja dla pamieci--
 def intelligent_truncate(text: str, max_len: int) -> str:
@@ -810,7 +823,32 @@ def save_langgraph_execution_log(log_content: str, file_path: str):
         print(f"✅ SUKCES: Log wykonania LangGraph został pomyślnie zapisany.")
     except Exception as e:
         print(f"❌ BŁĄD: Nie udało się zapisać logu LangGraph. Przyczyna: {e}")  
-        
+
+
+def get_active_policies_from_memory(memory_client, dataset_signature: str) -> Optional[str]:
+    """Odpytuje pamięć o META_INSIGHTS i tworzy z nich tekst polityk."""
+    print("--- DORADCA POLITYKI SYSTEMOWEJ: Sprawdzanie pamięci... ---")
+    
+    meta_insights = memory_client.query_memory(
+        query_text="Najważniejsze rekomendacje dotyczące ulepszenia promptów lub logiki systemu",
+        scope={"dataset_signature": dataset_signature},
+        top_k=3
+    )
+    
+    active_policies = []
+    if meta_insights:
+        for mem in meta_insights:
+            if mem.memory_type == MemoryType.META_INSIGHT and 'recommendation' in mem.content:
+                active_policies.append(f"- {mem.content['recommendation']}")
+    
+    if active_policies:
+        policy_text = "--- AKTYWNE POLITYKI SYSTEMOWE (NAJWYŻSZY PRIORYTET) ---\n" + "\n".join(active_policies)
+        print(f"  [INFO] Aktywowano polityki:\n{policy_text}")
+        return policy_text
+    
+    print("  [INFO] Brak aktywnych polityk systemowych.")
+    return None
+
         
 TOOL_REGISTRY = {
     "embed_plot_to_html": embed_plot_to_html
@@ -837,7 +875,7 @@ from autogen.agentchat.contrib.multimodal_conversable_agent import MultimodalCon
 
 
 #FUNKCJA CHATU GRUPOWEGO-WYMYŚLANIE PLANU
-def run_autogen_planning_phase(input_path: str,trigger_agent: TriggerAgent,planner_agent: PlannerAgent, critic_agent: CriticAgent, manager_agent_config:Dict,inspiration_prompt: str = "") -> Optional[str]:
+def run_autogen_planning_phase(input_path: str,trigger_agent: TriggerAgent,planner_agent: PlannerAgent, critic_agent: CriticAgent, manager_agent_config:Dict,inspiration_prompt: str = "",active_policies: Optional[str] = None) -> Optional[str]:
     """
     Uruchamia fazę planowania z agentami AutoGen i zwraca finalny plan.
     """
@@ -849,13 +887,19 @@ def run_autogen_planning_phase(input_path: str,trigger_agent: TriggerAgent,plann
         df_summary = pd.read_csv(input_path, nrows=5)
         data_preview = f"Oto podgląd danych:\n\nKolumny:\n{df_summary.columns.tolist()}\n\nPierwsze 5 wierszy:\n{df_summary.to_string()}"
         
+        
+        if active_policies:
+            print("INFO: Dołączam aktywne polityki systemowe do fazy planowania.")
+            data_preview += "\n\n" + active_policies
+        
+        
         if inspiration_prompt:
             print("INFO: Dołączam inspiracje z pamięci do fazy planowania.")
             data_preview += "\n\n" + inspiration_prompt
         
     except Exception as e:
         logging.error(f"Nie można wczytać pliku wejściowego {input_path}: {e}")
-        return None
+        return None, ""
     
     
     
@@ -865,7 +909,7 @@ def run_autogen_planning_phase(input_path: str,trigger_agent: TriggerAgent,plann
        max_consecutive_auto_reply=10,
        is_termination_msg=lambda x: x.get("content", "").rstrip().endswith("TERMINATE"),
        code_execution_config=False,
-       system_message="Zarządzasz procesem. Przekaż podgląd danych do TriggerAgenta, a następnie moderuj dyskusję między Plannerem a Krytykiem. Jeśli w wiadomości są inspiracje z przeszłości, przekaż je Plannerowi."
+       system_message="Zarządzasz procesem. Przekaż podgląd danych do TriggerAgenta. Następnie moderuj dyskusję między Plannerem a Krytykiem. Jeśli w wiadomości znajdują się 'AKTYWNE POLITYKI SYSTEMOWE' lub 'INSPIRACJE Z POPRZEDNICH URUCHOMIEŃ', upewnij się, że przekażesz je w całości Plannerowi."
     )
 
     def custom_speaker_selection_func(last_speaker: Agent, groupchat: autogen.GroupChat):
@@ -1105,7 +1149,7 @@ def universal_debugger_node(state: AgentWorkflowState):
     llm = ChatVertexAI(model_name=MAIN_AGENT,temperature=0.0, project=PROJECT_ID, location=LOCATION)
     tools = [propose_code_fix, request_package_installation, inspect_tool_code]
     llm_with_tools = llm.bind_tools(tools)
-    prompt = LangchainAgentsPrompts.tool_based_debugger(failing_node=failing_node_name)
+    prompt = LangchainAgentsPrompts.tool_based_debugger(failing_node=failing_node_name,active_policies=state.get("active_policies"))
     error_context = f"Wadliwy Kontekst:\n```\n{state['error_context_code']}\n```\n\nBłąd:\n```\n{state['error_message']}\n```"
     response = llm_with_tools.invoke(prompt + error_context)
     if not response.tool_calls:
@@ -1431,15 +1475,28 @@ def meta_auditor_node(state: AgentWorkflowState):
     print("\n" + "="*80 + "\n### ### FAZA 3: META-AUDYT I KONSOLIDACJA WIEDZY ### ###\n" + "="*80 + "\n")
     memory_client = state['memory_client']
 
-    # 1. Zapisz wspomnienie o udanym planie (jeśli nie było błędów)
-    if state.get('plan') and not state.get('error_message'):
-        distilled_content = distill_success_memory(final_plan=state['plan'])
-        plan_record = MemoryRecord(
-            run_id=state['run_id'], memory_type=MemoryType.SUCCESSFUL_PLAN,
-            dataset_signature=state['dataset_signature'], source_node="meta_auditor_node",
-            content=distilled_content, metadata={"importance_score": 0.8}
-        )
-        memory_client.add_memory(plan_record)
+    if not state.get("escalation_report_path"):
+        try:
+            print("  [INFO] Uruchamiam proces destylacji wspomnienia o sukcesie...")
+            # --- ZMIANA 2: Zabezpieczenie przed limitem tokenów ---
+            truncated_plan = intelligent_truncate(state.get('plan', ''), 3000)
+            distilled_content = distill_success_memory(final_plan=truncated_plan)
+            
+            if distilled_content and distilled_content.get("key_insight"):
+                # Dodatkowe zabezpieczenie dla wyniku destylacji
+                distilled_content["key_insight"] = intelligent_truncate(distilled_content["key_insight"], 2000)
+
+                plan_record = MemoryRecord(
+                    run_id=state['run_id'],
+                    memory_type=MemoryType.SUCCESSFUL_PLAN,
+                    dataset_signature=state['dataset_signature'],
+                    source_node="meta_auditor_node",
+                    content=distilled_content,
+                    metadata={"importance_score": 0.8}
+                )
+                memory_client.add_memory(plan_record)
+        except Exception as e:
+            print(f"  [BŁĄD ZAPISU PAMIĘCI] Nie udało się zapisać udanego planu: {e}")
     
     # 2. Uruchom audytora (logika bez zmian)
     try:
@@ -1468,9 +1525,12 @@ def meta_auditor_node(state: AgentWorkflowState):
         
         llm = ChatAnthropic(model_name=CRITIC_MODEL, temperature=0.0, max_tokens=2048)
         prompt = LangchainAgentsPrompts.create_meta_auditor_prompt(
-            source_code=state['source_code'], autogen_conversation=state['autogen_log'],
-            langgraph_log=state['langgraph_log'], final_code=state.get('generated_code', 'Brak kodu'),
-            final_report=final_report_content,escalation_report=escalation_report_content
+            source_code=intelligent_truncate(state['source_code'], 8000),
+            autogen_conversation=intelligent_truncate(state['autogen_log'], 6000),
+            langgraph_log=intelligent_truncate(state.get('langgraph_log', ''), 6000),
+            final_code=state.get('generated_code', 'Brak kodu'),
+            final_report=final_report_content,
+            escalation_report=escalation_report_content
         )
         audit_report = llm.invoke(prompt).content
         # ... (zapis raportu do pliku)
@@ -1887,7 +1947,7 @@ def generate_meta_insight(audit_report: str) -> Optional[dict]:
     [RAPORT AUDYTORA]:\n{audit_report}
     """
     try:
-        llm = ChatVertexAI(model_name=CRITIC_MODEL, project_id=PROJECT_ID, location=LOCATION)
+        llm = ChatAnthropic(model_name=CRITIC_MODEL, temperature=0.2)
         structured_llm = llm.with_structured_output(MetaInsightMemory)
         insight_object = structured_llm.invoke(prompt)
         print("INFO: Pomyślnie wygenerowano wniosek META.")

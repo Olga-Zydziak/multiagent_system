@@ -138,7 +138,7 @@ def universal_debugger_node(state: AgentWorkflowState):
     llm = ChatVertexAI(model_name=MAIN_AGENT,temperature=0.0, project=PROJECT_ID, location=LOCATION)
     tools = [propose_code_fix, request_package_installation, inspect_tool_code]
     llm_with_tools = llm.bind_tools(tools)
-    prompt = LangchainAgentsPrompts.tool_based_debugger(failing_node=failing_node_name)
+    prompt = LangchainAgentsPrompts.tool_based_debugger(failing_node=failing_node_name,active_policies=state.get("active_policies"))
     error_context = f"Wadliwy Kontekst:\n```\n{state['error_context_code']}\n```\n\nBłąd:\n```\n{state['error_message']}\n```"
     response = llm_with_tools.invoke(prompt + error_context)
     if not response.tool_calls:
@@ -464,15 +464,28 @@ def meta_auditor_node(state: AgentWorkflowState):
     print("\n" + "="*80 + "\n### ### FAZA 3: META-AUDYT I KONSOLIDACJA WIEDZY ### ###\n" + "="*80 + "\n")
     memory_client = state['memory_client']
 
-    # 1. Zapisz wspomnienie o udanym planie (jeśli nie było błędów)
-    if state.get('plan') and not state.get('error_message'):
-        distilled_content = distill_success_memory(final_plan=state['plan'])
-        plan_record = MemoryRecord(
-            run_id=state['run_id'], memory_type=MemoryType.SUCCESSFUL_PLAN,
-            dataset_signature=state['dataset_signature'], source_node="meta_auditor_node",
-            content=distilled_content, metadata={"importance_score": 0.8}
-        )
-        memory_client.add_memory(plan_record)
+    if not state.get("escalation_report_path"):
+        try:
+            print("  [INFO] Uruchamiam proces destylacji wspomnienia o sukcesie...")
+            # --- ZMIANA 2: Zabezpieczenie przed limitem tokenów ---
+            truncated_plan = intelligent_truncate(state.get('plan', ''), 3000)
+            distilled_content = distill_success_memory(final_plan=truncated_plan)
+            
+            if distilled_content and distilled_content.get("key_insight"):
+                # Dodatkowe zabezpieczenie dla wyniku destylacji
+                distilled_content["key_insight"] = intelligent_truncate(distilled_content["key_insight"], 2000)
+
+                plan_record = MemoryRecord(
+                    run_id=state['run_id'],
+                    memory_type=MemoryType.SUCCESSFUL_PLAN,
+                    dataset_signature=state['dataset_signature'],
+                    source_node="meta_auditor_node",
+                    content=distilled_content,
+                    metadata={"importance_score": 0.8}
+                )
+                memory_client.add_memory(plan_record)
+        except Exception as e:
+            print(f"  [BŁĄD ZAPISU PAMIĘCI] Nie udało się zapisać udanego planu: {e}")
     
     # 2. Uruchom audytora (logika bez zmian)
     try:
@@ -501,9 +514,12 @@ def meta_auditor_node(state: AgentWorkflowState):
         
         llm = ChatAnthropic(model_name=CRITIC_MODEL, temperature=0.0, max_tokens=2048)
         prompt = LangchainAgentsPrompts.create_meta_auditor_prompt(
-            source_code=state['source_code'], autogen_conversation=state['autogen_log'],
-            langgraph_log=state['langgraph_log'], final_code=state.get('generated_code', 'Brak kodu'),
-            final_report=final_report_content,escalation_report=escalation_report_content
+            source_code=intelligent_truncate(state['source_code'], 8000),
+            autogen_conversation=intelligent_truncate(state['autogen_log'], 6000),
+            langgraph_log=intelligent_truncate(state.get('langgraph_log', ''), 6000),
+            final_code=state.get('generated_code', 'Brak kodu'),
+            final_report=final_report_content,
+            escalation_report=escalation_report_content
         )
         audit_report = llm.invoke(prompt).content
         # ... (zapis raportu do pliku)

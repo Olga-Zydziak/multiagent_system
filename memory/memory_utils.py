@@ -139,7 +139,7 @@ def generate_meta_insight(audit_report: str) -> Optional[dict]:
     [RAPORT AUDYTORA]:\n{audit_report}
     """
     try:
-        llm = ChatVertexAI(model_name=CRITIC_MODEL, project_id=PROJECT_ID, location=LOCATION)
+        llm = ChatAnthropic(model_name=CRITIC_MODEL, temperature=0.2)
         structured_llm = llm.with_structured_output(MetaInsightMemory)
         insight_object = structured_llm.invoke(prompt)
         print("INFO: Pomyślnie wygenerowano wniosek META.")

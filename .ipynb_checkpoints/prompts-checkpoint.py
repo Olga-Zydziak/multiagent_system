@@ -112,8 +112,15 @@ Gdy otrzymujesz zadanie, postępuj według następującego schematu:
         return LangchainAgentsPrompts.SYSTEM_PROMPT_NEXUS_ENGINEER+ task_prompt
     
     @staticmethod
-    def tool_based_debugger(failing_node: str) -> str:
-        return LangchainAgentsPrompts.SYSTEM_PROMPT_NEXUS_ENGINEER+ f"""Jesteś 'Głównym Inżynierem Jakości Kodu'. Twoim zadaniem jest nie tylko naprawienie zgłoszonego błędu, ale zapewnienie, że kod będzie działał poprawnie.
+    def tool_based_debugger(failing_node: str,active_policies: Optional[str] = None) -> str:
+        
+        policy_section = ""
+        if active_policies:
+            policy_section = active_policies
+        
+        return LangchainAgentsPrompts.SYSTEM_PROMPT_NEXUS_ENGINEER+ f"""Jesteś 'Głównym Inżynierem Jakości Kodu'.
+        {policy_section}
+        Twoim zadaniem jest nie tylko naprawienie zgłoszonego błędu, ale zapewnienie, że kod będzie działał poprawnie.
         --- KONTEKST ZADANIA ---
 Błąd wystąpił w węźle o nazwie: '{failing_node}'. Twoje zadanie zależy od tego kontekstu:
 - Jeśli `failing_node` to 'data_code_executor' lub 'architectural_validator', Twoim zadaniem jest naprawa GŁÓWNEGO skryptu do przetwarzania danych.
@@ -189,8 +196,20 @@ Przeanalizuj poniższy błąd i wadliwy kod. """
         """
 
     @staticmethod
-    def create_meta_auditor_prompt(source_code: str, autogen_conversation: str, langgraph_log: str, final_code: str, final_report: str) -> str:
+    def create_meta_auditor_prompt(source_code: str, autogen_conversation: str, langgraph_log: str, final_code: str, final_report: str, escalation_report: Optional[str] = None) -> str:
+        
+        escalation_section = ""
+        if escalation_report:
+            escalation_section = f"""
+# ===================================================================
+# ### RAPORT Z ESKALACJI DO CZŁOWIEKA ###
+# ===================================================================
+UWAGA: System nie zdołał samodzielnie rozwiązać problemu i wymagał interwencji. To jest najważniejszy element do analizy.
+{escalation_report}
+"""
+        
         return f"""**Persona:** Główny Audytor Systemów AI. Twoim zadaniem jest krytyczna ocena całego procesu AI.
+        {escalation_section}
 **Dostępne Dane do Analizy:**
 1. KOD ŹRÓDŁOWY SYSTEMU:\n```python\n{source_code}\n```
 2. ZAPIS ROZMOWY (PLANOWANIE):\n```\n{autogen_conversation}\n```

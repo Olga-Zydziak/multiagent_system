@@ -112,8 +112,15 @@ Gdy otrzymujesz zadanie, postępuj według następującego schematu:
         return LangchainAgentsPrompts.SYSTEM_PROMPT_NEXUS_ENGINEER+ task_prompt
     
     @staticmethod
-    def tool_based_debugger(failing_node: str) -> str:
-        return LangchainAgentsPrompts.SYSTEM_PROMPT_NEXUS_ENGINEER+ f"""Jesteś 'Głównym Inżynierem Jakości Kodu'. Twoim zadaniem jest nie tylko naprawienie zgłoszonego błędu, ale zapewnienie, że kod będzie działał poprawnie.
+    def tool_based_debugger(failing_node: str,active_policies: Optional[str] = None) -> str:
+        
+        policy_section = ""
+        if active_policies:
+            policy_section = active_policies
+        
+        return LangchainAgentsPrompts.SYSTEM_PROMPT_NEXUS_ENGINEER+ f"""Jesteś 'Głównym Inżynierem Jakości Kodu'.
+        {policy_section}
+        Twoim zadaniem jest nie tylko naprawienie zgłoszonego błędu, ale zapewnienie, że kod będzie działał poprawnie.
         --- KONTEKST ZADANIA ---
 Błąd wystąpił w węźle o nazwie: '{failing_node}'. Twoje zadanie zależy od tego kontekstu:
 - Jeśli `failing_node` to 'data_code_executor' lub 'architectural_validator', Twoim zadaniem jest naprawa GŁÓWNEGO skryptu do przetwarzania danych.

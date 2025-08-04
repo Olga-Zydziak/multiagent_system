@@ -14,7 +14,7 @@ from typing import TypedDict, List, Callable, Dict, Optional, Union, Any
 import pandas as pd
 import datetime
 import logging
-
+from memory.memory_models import MemoryType
 
 #--funkcja dla pamieci--
 def intelligent_truncate(text: str, max_len: int) -> str:
@@ -150,7 +150,32 @@ def save_langgraph_execution_log(log_content: str, file_path: str):
         print(f"✅ SUKCES: Log wykonania LangGraph został pomyślnie zapisany.")
     except Exception as e:
         print(f"❌ BŁĄD: Nie udało się zapisać logu LangGraph. Przyczyna: {e}")  
-        
+
+
+def get_active_policies_from_memory(memory_client, dataset_signature: str) -> Optional[str]:
+    """Odpytuje pamięć o META_INSIGHTS i tworzy z nich tekst polityk."""
+    print("--- DORADCA POLITYKI SYSTEMOWEJ: Sprawdzanie pamięci... ---")
+    
+    meta_insights = memory_client.query_memory(
+        query_text="Najważniejsze rekomendacje dotyczące ulepszenia promptów lub logiki systemu",
+        scope={"dataset_signature": dataset_signature},
+        top_k=3
+    )
+    
+    active_policies = []
+    if meta_insights:
+        for mem in meta_insights:
+            if mem.memory_type == MemoryType.META_INSIGHT and 'recommendation' in mem.content:
+                active_policies.append(f"- {mem.content['recommendation']}")
+    
+    if active_policies:
+        policy_text = "--- AKTYWNE POLITYKI SYSTEMOWE (NAJWYŻSZY PRIORYTET) ---\n" + "\n".join(active_policies)
+        print(f"  [INFO] Aktywowano polityki:\n{policy_text}")
+        return policy_text
+    
+    print("  [INFO] Brak aktywnych polityk systemowych.")
+    return None
+
         
 TOOL_REGISTRY = {
     "embed_plot_to_html": embed_plot_to_html
