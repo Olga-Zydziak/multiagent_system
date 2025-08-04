@@ -1,0 +1,59 @@
+
+Data: 2025-08-04 10:09:33
+Problem: Przekroczono maksymalny limit (5) prób automatycznej naprawy.
+
+Ostatnia analiza debuggera:
+
+
+Ostatni kod, który zawiódł:
+```python
+figures_to_embed = []
+
+# Krok 1: Zdefiniowanie kluczowych zmiennych numerycznych do analizy
+# Zgodnie z planem (punkt 5.1), analizujemy dystrybucję kluczowych zmiennych numerycznych,
+# aby wizualnie zidentyfikować wartości odstające. Wybrane kolumny to te, które
+# w kolejnych krokach (5.2, 5.3, 5.4) podlegają cappingowi.
+columns_to_analyze = ['Transaction_Amount', 'Account_Balance', 'Transaction_Distance']
+
+# Krok 2: Iteracja przez zdefiniowane kolumny i generowanie wizualizacji
+# Dla każdej kolumny tworzymy dedykowaną figurę zawierającą dwa wykresy:
+# - Histogram: do zobrazowania rozkładu (dystrybucji) wartości.
+# - Wykres pudełkowy (box plot): do precyzyjnej identyfikacji wartości odstających i kwantyli.
+for col in columns_to_analyze:
+    # Krok 2.1: Utworzenie figury i osi dla dwóch wykresów obok siebie
+    fig, axes = plt.subplots(1, 2, figsize=(15, 6))
+
+    # Krok 2.2: Generowanie Histogramu
+    # Ten wykres pokazuje, jak często występują różne zakresy wartości w kolumnie.
+    axes[0].hist(df_processed[col].dropna(), bins=50, color='skyblue', edgecolor='black')
+    axes[0].set_title(f'Histogram dla \'{col}\' (po przetworzeniu)', fontsize=12)
+    axes[0].set_xlabel('Wartość', fontsize=10)
+    axes[0].set_ylabel('Częstotliwość', fontsize=10)
+    axes[0].grid(axis='y', linestyle='--', alpha=0.7)
+
+    # Krok 2.3: Generowanie Wykresu Pudełkowego
+    # Ten wykres wyraźnie pokazuje medianę, kwartyle oraz wartości odstające (outliers).
+    axes[1].boxplot(df_processed[col].dropna(), vert=False, patch_artist=True, boxprops=dict(facecolor='lightgreen'))
+    axes[1].set_title(f'Wykres pudełkowy dla \'{col}\' (po przetworzeniu)', fontsize=12)
+    axes[1].set_xlabel('Wartość', fontsize=10)
+
+    # Krok 2.4: Ustawienie głównego tytułu dla całej figury
+    fig.suptitle(f'Analiza Dystrybucji i Wartości Odstających dla: {col}', fontsize=16)
+
+    # Krok 2.5: Zapewnienie odpowiedniego układu i uniknięcie nakładania się etykiet
+    fig.tight_layout(rect=[0, 0.03, 1, 0.95])
+
+    # Krok 2.6: Dodanie gotowej figury do listy wynikowej
+    figures_to_embed.append(fig)
+```
+
+Pełny traceback ostatniego błędu:
+Błąd w kompozytorze raportu: Traceback (most recent call last):
+  File "/home/jupyter/olga_zydziak/version_beta/multiagent_system/agents/langgraph_nodes.py", line 406, in report_composer_node
+    figures_html += f"<h3>Wykres {i+1}</h3>{embed_plot_to_html(fig)}"
+                                            ^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/jupyter/olga_zydziak/version_beta/multiagent_system/tools/utils.py", line 72, in embed_plot_to_html
+    plt.close(figure) # Ważne: zamykamy figurę
+    ^^^
+NameError: name 'plt' is not defined
+

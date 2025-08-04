@@ -2,6 +2,9 @@ import os
 import io
 import sys
 import subprocess
+import inspect
+import matplotlib.pyplot as plt
+import base64 
 import tempfile
 import traceback
 import uuid
@@ -80,7 +83,35 @@ def read_source_code(file_path: str) -> str:
     except Exception as e: return f"Nie udało się odczytać kodu źródłowego: {e}"
 
 
+def read_project_source_code(root_dir=".", exclude_dirs=None, exclude_files=None): # <-- Dodaj nowy argument
+    """
+    Rekursywnie skanuje katalog projektu, odczytuje zawartość plików .py i .ipynb,
+    i łączy je w jeden, sformatowany string dla meta-audytora.
+    """
+    if exclude_dirs is None:
+        exclude_dirs = {'__pycache__', '.ipynb_checkpoints', 'reports', '.git'}
+    
+    if exclude_files is None: # <-- Dodaj tę sekcję
+        exclude_files = set()
 
+    full_source_code = ""
+    for dirpath, dirnames, filenames in os.walk(root_dir):
+        dirnames[:] = [d for d in dirnames if d not in exclude_dirs]
+        
+        for filename in filenames:
+            if filename in exclude_files: # <-- Dodaj tę linię, aby pomijać pliki
+                continue
+            
+            if filename.endswith(".py") or filename.endswith(".ipynb"):
+                file_path = os.path.join(dirpath, filename)
+                try:
+                    with open(file_path, 'r', encoding='utf-8') as f:
+                        content = f.read()
+                        full_source_code += f"--- FILE: {file_path} ---\n\n{content}\n\n"
+                except Exception as e:
+                    full_source_code += f"--- FILE: {file_path} ---\n\n[BŁĄD ODCZYTU: {e}]\n\n"
+                    
+    return full_source_code
 
 #Zapis planowania preprocessingu- AutoGen
 def save_autogen_conversation_log(log_content: str, file_path: str):
@@ -118,4 +149,9 @@ def save_langgraph_execution_log(log_content: str, file_path: str):
             
         print(f"✅ SUKCES: Log wykonania LangGraph został pomyślnie zapisany.")
     except Exception as e:
-        print(f"❌ BŁĄD: Nie udało się zapisać logu LangGraph. Przyczyna: {e}")       
+        print(f"❌ BŁĄD: Nie udało się zapisać logu LangGraph. Przyczyna: {e}")  
+        
+        
+TOOL_REGISTRY = {
+    "embed_plot_to_html": embed_plot_to_html
+}

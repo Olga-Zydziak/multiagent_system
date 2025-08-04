@@ -101,7 +101,7 @@ from prompts import LangchainAgentsPrompts,AutoGenAgentsPrompts
 from agents.langgraph_nodes import * 
 from agents.autogen_agent_utils import run_autogen_planning_phase
 from memory.memory_bank_client import MemoryBankClient
-from tools.utils import read_source_code, save_autogen_conversation_log, save_langgraph_execution_log
+from tools.utils import *
 # --- Koniec komórki ---
 AGENT_ENGINE_NAME = "" # Zostanie wypełniona po pobraniu lub utworzeniu silnika
 
@@ -155,8 +155,9 @@ critic_agent = CriticAgent(llm_config=main_agent_configuration,prompt=critic_pro
 
 # --- Koniec komórki ---
 if __name__ == "__main__":
-    os.makedirs("reports", exist_ok=True)
-    system_source_code = read_source_code("main.ipynb")
+    
+    files_to_exclude = {'Agents_beta (10).py','pack_project.ipynb', 'caly_projekt.txt'}
+    system_source_code = read_project_source_code(".", exclude_files=files_to_exclude)
 
     # --- Inicjalizacja Pamięci i Uruchomienia ---
     memory_client = MemoryBankClient(client=client, agent_engine=agent_engine)
@@ -212,7 +213,7 @@ if __name__ == "__main__":
             "schema_reader", "code_generator", "architectural_validator", 
             "data_code_executor", "universal_debugger", "apply_code_fix", 
             "human_approval", "package_installer", "human_escalation", 
-            "sync_report_code", "commit_memory",
+            "sync_report_code", "commit_memory","meta_auditor",
             # Nowe, wyspecjalizowane węzły raportujące:
             "summary_analyst", "plot_generator", "report_composer" 
         ]
@@ -258,11 +259,11 @@ if __name__ == "__main__":
         workflow.add_conditional_edges(
             "report_composer",
             should_continue_or_debug,
-            {"call_debugger": "universal_debugger", "request_human_help": "human_escalation", "continue": END}
+            {"call_debugger": "universal_debugger", "request_human_help": "human_escalation", "continue": "meta_auditor"}
         )
 
         # Ścieżki naprawcze
-        workflow.add_edge("human_escalation", END)
+        workflow.add_edge("human_escalation", "meta_auditor")
         workflow.add_edge("package_installer", "data_code_executor")
 
         def route_after_fix(state):
@@ -476,6 +477,8 @@ Błąd wystąpił w węźle o nazwie: '{failing_node}'. Twoje zadanie zależy od
     - NIE używaj `plt.show()`.
     - Każdą figurę (`fig`) MUSISZ dodać do listy `figures_to_embed`.
 ---
+--- NOWA ZDOLNOŚĆ: DIAGNOZA NARZĘDZI ---
+Jeśli traceback błędu (np. NameError, AttributeError) wskazuje na funkcję, która jest wewnętrznym narzędziem systemu, a nie na kod, który masz naprawić, użyj narzędzia `inspect_tool_code`, aby przeczytać kod źródłowy tego narzędzia. Przeanalizuj go i, jeśli znajdziesz w nim błąd (np. brakujący import), w swojej finalnej poprawce do `corrected_code` dołącz brakujące importy lub logikę, aby naprawić również ten błąd.
 - Jeśli błąd to `ModuleNotFoundError`, użyj `request_package_installation`.
 - Jeśli błąd to `ImportError` wskazujący na konflikt wersji, również użyj `request_package_installation`, aby zasugerować aktualizację pakietu, który jest źródłem błędu.
 - Dla wszystkich innych błędów w kodzie (np. `SyntaxError`, `KeyError`), użyj `propose_code_fix` a następnie przeanalizuj poniższy błąd i wadliwy kod. Twoja praca składa się z dwóch kroków:
@@ -506,36 +509,51 @@ Przeanalizuj poniższy błąd i wadliwy kod. """
         """
 
     @staticmethod
-    def plot_generator_prompt(plan: str) -> str:
+    def plot_generator_prompt(plan: str,available_columns: List[str]) -> str:
         """
         Tworzy prompt dla agenta, którego JEDYNYM zadaniem jest napisanie
         kodu w Pythonie do generowania wykresów.
         """
-        return LangchainAgentsPrompts.SYSTEM_PROMPT_NEXUS_ENGINEER+ f"""
-        Jesteś ekspertem od wizualizacji danych w Pythonie przy użyciu biblioteki Matplotlib. Twoim jedynym zadaniem jest napisanie fragmentu kodu w Pythonie.
-        
-        Ten kod, gdy zostanie wykonany, musi stworzyć co najmniej dwie figury `matplotlib` ilustrujące zmiany w danych opisane w poniższym planie. Każdą stworzoną figurę (obiekt `fig`) musisz dodać do listy o nazwie `figures_to_embed`.
-        
-        W środowisku wykonawczym Twojego kodu dostępne będą ramki danych `df_original` i `df_processed`.
+        return LangchainAgentsPrompts.SYSTEM_PROMPT_NEXUS_ENGINEER + f"""
+        Jesteś ekspertem od wizualizacji danych w Pythonie przy użyciu biblioteki Matplotlib.
+        Twoim jedynym zadaniem jest napisanie fragmentu kodu w Pythonie.
         
         PLAN, KTÓRY MASZ ZILUSTROWAĆ:
         {plan}
+
+        --- KRYTYCZNE INFORMACJE ---
+        DOSTĘPNE KOLUMNY W DANYCH `df_processed`, KTÓRYCH MOŻESZ UŻYĆ:
+        {available_columns}
+        --- KONIEC KRYTYCZNYCH INFORMACJI ---
         
         WAŻNE ZASADY:
-1.  Każdy wykres musi mieć tytuł i czytelne etykiety osi.
-2.  Użyj `fig.tight_layout()` przed dodaniem figury do listy.
-3.  **Używaj WYŁĄCZNIE biblioteki `matplotlib.pyplot`. Nie używaj `plotly`, `seaborn` ani żadnej innej.**
-4.  NIE importuj bibliotek. Zakładaj, że `matplotlib.pyplot as plt` i `pandas as pd` są już dostępne.
-5.  NIE twórz własnych danych. Używaj wyłącznie ramek danych `df_original` i `df_processed`.
-6.  NIE używaj `plt.show()`. Twoim zadaniem jest tylko stworzenie obiektów figur.
-7.  Każdą stworzoną figurę (`fig`) MUSISZ dodać do listy o nazwie `figures_to_embed`.
-8.  Twoja odpowiedź musi zawierać TYLKO i WYŁĄCZNIE kod Pythona.
-9.  **Twoja odpowiedź MUSI być obiektem JSON zawierającym jeden klucz: "code", którego wartością jest skrypt Pythona jako string.**
+        1.  **Generuj wykresy TYLKO dla kolumn, które znajdują się na powyższej liście dostępnych kolumn.**
+        2.  Każdy wykres musi mieć tytuł i czytelne etykiety osi.
+        3.  Użyj `fig.tight_layout()` przed dodaniem figury do listy.
+        4.  **Używaj WYŁĄCZNIE biblioteki `matplotlib.pyplot`. Nie używaj `plotly` ani `seaborn`.**
+        5.  NIE importuj bibliotek. Zakładaj, że `matplotlib.pyplot as plt` i `pandas as pd` są już dostępne.
+        6.  NIE twórz własnych danych. Używaj wyłącznie ramek danych `df_original` i `df_processed`.
+        7.  NIE używaj `plt.show()`. Twoim zadaniem jest tylko stworzenie obiektów figur.
+        8.  Każdą stworzoną figurę (`fig`) MUSISZ dodać do listy o nazwie `figures_to_embed`.
+        9.  Twoja odpowiedź musi zawierać TYLKO i WYŁĄCZNIE kod Pythona.
+        10. **Twoja odpowiedź MUSI być obiektem JSON zawierającym jeden klucz: "code", którego wartością jest skrypt Pythona jako string.**
         """
 
     @staticmethod
-    def create_meta_auditor_prompt(source_code: str, autogen_conversation: str, langgraph_log: str, final_code: str, final_report: str) -> str:
+    def create_meta_auditor_prompt(source_code: str, autogen_conversation: str, langgraph_log: str, final_code: str, final_report: str, escalation_report: Optional[str] = None) -> str:
+        
+        escalation_section = ""
+        if escalation_report:
+            escalation_section = f"""
+# ===================================================================
+# ### RAPORT Z ESKALACJI DO CZŁOWIEKA ###
+# ===================================================================
+UWAGA: System nie zdołał samodzielnie rozwiązać problemu i wymagał interwencji. To jest najważniejszy element do analizy.
+{escalation_report}
+"""
+        
         return f"""**Persona:** Główny Audytor Systemów AI. Twoim zadaniem jest krytyczna ocena całego procesu AI.
+        {escalation_section}
 **Dostępne Dane do Analizy:**
 1. KOD ŹRÓDŁOWY SYSTEMU:\n```python\n{source_code}\n```
 2. ZAPIS ROZMOWY (PLANOWANIE):\n```\n{autogen_conversation}\n```
@@ -580,6 +598,7 @@ class ArchitecturalRulesManager:
 
 from pydantic import BaseModel, Field
 from langchain_core.tools import tool
+from .utils import TOOL_REGISTRY
 #--BaseModel
 
 class DebugReport(BaseModel):
@@ -612,6 +631,9 @@ class PlottingCode(BaseModel):
 
 
     
+class InspectToolArgs(BaseModel):
+    tool_name: str = Field(description="Nazwa funkcji/narzędzia do inspekcji, np. 'embed_plot_to_html'.")
+    
 #narzędzia dla langchain agentów    
 @tool(args_schema=CodeFixArgs)
 def propose_code_fix(analysis: str, corrected_code: str) -> None:
@@ -624,12 +646,25 @@ def request_package_installation(package_name: str, analysis: str) -> None:
     pass 
 
 
+@tool(args_schema=InspectToolArgs)
+def inspect_tool_code(tool_name: str) -> str:
+    """Użyj tego narzędzia, aby przeczytać kod źródłowy wewnętrznej funkcji systemowej.
+    Jest to przydatne, gdy podejrzewasz, że błąd (np. NameError) leży w narzędziu, a nie w kodzie, który analizujesz."""
+    if tool_name in TOOL_REGISTRY:
+        source_code = inspect.getsource(TOOL_REGISTRY[tool_name])
+        return f"Oto kod źródłowy narzędzia '{tool_name}':\n```python\n{source_code}\n```"
+    return f"BŁĄD: Nie znaleziono narzędzia o nazwie '{tool_name}'."
+
+
 --- FILE: tools/utils.py ---
 
 import os
 import io
 import sys
 import subprocess
+import inspect
+import matplotlib.pyplot as plt
+import base64 
 import tempfile
 import traceback
 import uuid
@@ -708,7 +743,35 @@ def read_source_code(file_path: str) -> str:
     except Exception as e: return f"Nie udało się odczytać kodu źródłowego: {e}"
 
 
+def read_project_source_code(root_dir=".", exclude_dirs=None, exclude_files=None): # <-- Dodaj nowy argument
+    """
+    Rekursywnie skanuje katalog projektu, odczytuje zawartość plików .py i .ipynb,
+    i łączy je w jeden, sformatowany string dla meta-audytora.
+    """
+    if exclude_dirs is None:
+        exclude_dirs = {'__pycache__', '.ipynb_checkpoints', 'reports', '.git'}
+    
+    if exclude_files is None: # <-- Dodaj tę sekcję
+        exclude_files = set()
 
+    full_source_code = ""
+    for dirpath, dirnames, filenames in os.walk(root_dir):
+        dirnames[:] = [d for d in dirnames if d not in exclude_dirs]
+        
+        for filename in filenames:
+            if filename in exclude_files: # <-- Dodaj tę linię, aby pomijać pliki
+                continue
+            
+            if filename.endswith(".py") or filename.endswith(".ipynb"):
+                file_path = os.path.join(dirpath, filename)
+                try:
+                    with open(file_path, 'r', encoding='utf-8') as f:
+                        content = f.read()
+                        full_source_code += f"--- FILE: {file_path} ---\n\n{content}\n\n"
+                except Exception as e:
+                    full_source_code += f"--- FILE: {file_path} ---\n\n[BŁĄD ODCZYTU: {e}]\n\n"
+                    
+    return full_source_code
 
 #Zapis planowania preprocessingu- AutoGen
 def save_autogen_conversation_log(log_content: str, file_path: str):
@@ -746,7 +809,12 @@ def save_langgraph_execution_log(log_content: str, file_path: str):
             
         print(f"✅ SUKCES: Log wykonania LangGraph został pomyślnie zapisany.")
     except Exception as e:
-        print(f"❌ BŁĄD: Nie udało się zapisać logu LangGraph. Przyczyna: {e}")       
+        print(f"❌ BŁĄD: Nie udało się zapisać logu LangGraph. Przyczyna: {e}")  
+        
+        
+TOOL_REGISTRY = {
+    "embed_plot_to_html": embed_plot_to_html
+}
 
 
 --- FILE: agents/__init__.py ---
@@ -1035,7 +1103,7 @@ def universal_debugger_node(state: AgentWorkflowState):
     MAIN_AGENT=state['config']['MAIN_AGENT']
     # llm = ChatAnthropic(model_name=CODE_MODEL, temperature=0.0, max_tokens=2048)
     llm = ChatVertexAI(model_name=MAIN_AGENT,temperature=0.0, project=PROJECT_ID, location=LOCATION)
-    tools = [propose_code_fix, request_package_installation]
+    tools = [propose_code_fix, request_package_installation, inspect_tool_code]
     llm_with_tools = llm.bind_tools(tools)
     prompt = LangchainAgentsPrompts.tool_based_debugger(failing_node=failing_node_name)
     error_context = f"Wadliwy Kontekst:\n```\n{state['error_context_code']}\n```\n\nBłąd:\n```\n{state['error_message']}\n```"
@@ -1058,6 +1126,8 @@ def apply_code_fix_node(state: AgentWorkflowState):
     
     analysis = state.get("debugger_analysis", "")
     corrected_code = state.get("tool_args", {}).get("corrected_code")
+    failing_node = state.get("failing_node")
+    
     
     if not corrected_code:
         print("  [OSTRZEŻENIE] Debugger nie dostarczył kodu. Wymuszam jego wygenerowanie...")
@@ -1086,7 +1156,22 @@ def apply_code_fix_node(state: AgentWorkflowState):
         
     #--pamięć długotrwała info dla pamieci--
     
-    
+    update = {
+        "error_message": None, 
+        "tool_choice": None, 
+        "tool_args": None
+    }
+
+    if failing_node == "plot_generator_node":
+        print("  [INFO] Aplikowanie poprawki do kodu generującego wykresy.")
+        update["plot_generation_code"] = corrected_code
+    elif failing_node == "summary_analyst_node":
+        print("  [INFO] Aplikowanie poprawki do podsumowania HTML.")
+        update["summary_html"] = corrected_code
+    else: # Domyślnie traktuj jako główny kod
+        print("  [INFO] Aplikowanie poprawki do głównego kodu przetwarzania danych.")
+        update["generated_code"] = corrected_code
+
     session = state.get('pending_fix_session')
     if not session:
         # Sytuacja awaryjna, nie powinno się zdarzyć w normalnym przepływie
@@ -1211,7 +1296,12 @@ def summary_analyst_node(state: AgentWorkflowState) -> Dict[str, str]:
     except Exception as e:
         error_msg = f"Błąd w analityku podsumowania: {traceback.format_exc()}"
         print(f"  [BŁĄD] {error_msg}")
-        return {"error_message": error_msg, "failing_node": "summary_analyst_node"}
+        return {
+            "error_message": error_msg,
+            "failing_node": "summary_analyst_node",
+            "error_context_code": state.get('plan', 'Brak planu w stanie do analizy.'),
+            "correction_attempts": state.get("correction_attempts", 0) + 1  # <-- DODAJ TĘ LINIĘ
+        }
 
 
 def plot_generator_node(state: AgentWorkflowState) -> Dict[str, str]:
@@ -1220,17 +1310,25 @@ def plot_generator_node(state: AgentWorkflowState) -> Dict[str, str]:
     """
     print("--- WĘZEŁ: GENERATOR WIZUALIZACJI ---")
     try:
-        # === POPRAWKA: Użycie dedykowanego promptu ===
-        prompt = LangchainAgentsPrompts.plot_generator_prompt(plan=state['plan'])
-        MAIN_AGENT=state['config']['MAIN_AGENT']
-        # llm = ChatAnthropic(model_name=CODE_MODEL, temperature=0.0, max_tokens=2048)
-        llm = ChatVertexAI(model_name=MAIN_AGENT,temperature=0.0, project=PROJECT_ID, location=LOCATION)
-        # llm = ChatAnthropic(model_name=state['config']['CODE_MODEL'], temperature=0.0, max_tokens=2048)
+        # --- NOWY KROK: POBIERZ AKTUALNE KOLUMNY Z PRZETWORZONEGO PLIKU ---
+        df_processed_cols = pd.read_csv(state['output_path'], nrows=0).columns.tolist()
+
+        # Przekaż aktualne kolumny do promptu, aby agent wiedział, na czym pracuje
+        prompt = LangchainAgentsPrompts.plot_generator_prompt(
+            plan=state['plan'],
+            available_columns=df_processed_cols  # Przekazanie nowej informacji
+        )
+        
+        MAIN_AGENT = state['config']['MAIN_AGENT']
+        llm = ChatVertexAI(model_name=MAIN_AGENT, temperature=0.0, project=PROJECT_ID, location=LOCATION)
         structured_llm = llm.with_structured_output(PlottingCode)
+        
         response = structured_llm.invoke(prompt)
+        cleaned_code = extract_python_code(response.code)
         
         print("  [INFO] Generator stworzył kod do wizualizacji.")
-        return {"plot_generation_code": response.code}
+        return {"plot_generation_code": cleaned_code}
+        
 
     except Exception as e:
         error_msg = f"Błąd w generatorze wizualizacji: {traceback.format_exc()}"
@@ -1348,6 +1446,18 @@ def meta_auditor_node(state: AgentWorkflowState):
         
         CRITIC_MODEL=state['config']['CRITIC_MODEL']
         
+        escalation_report_content = None
+        escalation_path = state.get("escalation_report_path")
+        if escalation_path:
+            print(f"  [INFO] Wykryto raport z eskalacji. Wczytywanie pliku: {escalation_path}")
+            try:
+                with open(escalation_path, 'r', encoding='utf-8') as f:
+                    escalation_report_content = f.read()
+            except Exception as e:
+                print(f"  [OSTRZEŻENIE] Nie udało się wczytać pliku z eskalacją: {e}")
+        
+        
+        
         # ... (cała logika generowania raportu audytora, tak jak w oryginale)
         # Załóżmy, że wynikiem jest zmienna 'audit_report'
         final_report_content = "Brak raportu do analizy."
@@ -1360,11 +1470,25 @@ def meta_auditor_node(state: AgentWorkflowState):
         prompt = LangchainAgentsPrompts.create_meta_auditor_prompt(
             source_code=state['source_code'], autogen_conversation=state['autogen_log'],
             langgraph_log=state['langgraph_log'], final_code=state.get('generated_code', 'Brak kodu'),
-            final_report=final_report_content
+            final_report=final_report_content,escalation_report=escalation_report_content
         )
         audit_report = llm.invoke(prompt).content
         # ... (zapis raportu do pliku)
 
+        
+        
+        try:
+            audit_report_path = "reports/meta_audit_report.txt"
+            print(f"  [INFO] Zapisywanie raportu z audytu do: {audit_report_path}")
+            with open(audit_report_path, "w", encoding="utf-8") as f:
+                f.write("="*50 + "\n")
+                f.write("### RAPORT Z META-AUDYTU SYSTEMU AI ###\n")
+                f.write("="*50 + "\n\n")
+                f.write(audit_report)
+            print(f"  [SUKCES] Pomyślnie zapisano raport z audytu.")
+        except Exception as e:
+            print(f"  [BŁĄD] Nie udało się zapisać raportu z audytu: {e}")
+        
         # 3. WYGENERUJ I ZAPISZ WNIOSEK META
         meta_insight_content = generate_meta_insight(audit_report)
         if meta_insight_content:
@@ -1388,7 +1512,7 @@ def human_escalation_node(state: AgentWorkflowState):
     print("==================================================")
     # ... (reszta kodu bez zmian)
     report_content = f"""
-Data: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+Data: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
 Problem: Przekroczono maksymalny limit ({MAX_CORRECTION_ATTEMPTS}) prób automatycznej naprawy.
 
 Ostatnia analiza debuggera:
@@ -1402,10 +1526,10 @@ Ostatni kod, który zawiódł:
 Pełny traceback ostatniego błędu:
 {state.get('error_message', 'Brak błędu.')}
 """
-    file_name = f"reports/human_escalation_report_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+    file_name = f"reports/human_escalation_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
     with open(file_name, "w", encoding="utf-8") as f: f.write(report_content)
     print(f"  [INFO] Raport dla człowieka został zapisany w pliku: {file_name}")
-    return {}
+    return {"escalation_report_path": file_name}
 
 
 
@@ -1432,6 +1556,10 @@ class AgentWorkflowState(TypedDict):
     error_record_id: Optional[str]
     memory_client: MemoryBankClient
     pending_fix_session: Optional[Dict[str, Any]]
+    generated_code: str # Dla głównego kodu
+    summary_html: str # Wynik z summary_analyst
+    plot_generation_code: str # Wynik z plot_generator
+    escalation_report_path: Optional[str]
 
 
 --- FILE: memory/__init__.py ---
@@ -1625,6 +1753,8 @@ from langchain_google_vertexai import ChatVertexAI
 from langchain_anthropic import ChatAnthropic
 from tools.utils import intelligent_truncate
 from config import MAIN_AGENT,LOCATION,PROJECT_ID,CRITIC_MODEL
+from .memory_models import *
+
 #--narzedzie do przetwarzania info dla pamieci dlugotrwalej, llm agent uzywa llm!!
 def distill_memory_content(failing_code: str, error_traceback: str, debugger_analysis: str, corrected_code: str) -> dict:
     """Używa LLM do 'przedestylowania' surowych danych o błędzie i jego naprawie do zwięzłego, ustrukturyzowanego formatu."""

@@ -22,3 +22,4 @@ class AgentWorkflowState(TypedDict):
     generated_code: str # Dla głównego kodu
     summary_html: str # Wynik z summary_analyst
     plot_generation_code: str # Wynik z plot_generator
+    escalation_report_path: Optional[str]

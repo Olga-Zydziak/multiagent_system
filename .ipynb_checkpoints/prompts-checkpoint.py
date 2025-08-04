@@ -126,6 +126,8 @@ Błąd wystąpił w węźle o nazwie: '{failing_node}'. Twoje zadanie zależy od
     - NIE używaj `plt.show()`.
     - Każdą figurę (`fig`) MUSISZ dodać do listy `figures_to_embed`.
 ---
+--- NOWA ZDOLNOŚĆ: DIAGNOZA NARZĘDZI ---
+Jeśli traceback błędu (np. NameError, AttributeError) wskazuje na funkcję, która jest wewnętrznym narzędziem systemu, a nie na kod, który masz naprawić, użyj narzędzia `inspect_tool_code`, aby przeczytać kod źródłowy tego narzędzia. Przeanalizuj go i, jeśli znajdziesz w nim błąd (np. brakujący import), w swojej finalnej poprawce do `corrected_code` dołącz brakujące importy lub logikę, aby naprawić również ten błąd.
 - Jeśli błąd to `ModuleNotFoundError`, użyj `request_package_installation`.
 - Jeśli błąd to `ImportError` wskazujący na konflikt wersji, również użyj `request_package_installation`, aby zasugerować aktualizację pakietu, który jest źródłem błędu.
 - Dla wszystkich innych błędów w kodzie (np. `SyntaxError`, `KeyError`), użyj `propose_code_fix` a następnie przeanalizuj poniższy błąd i wadliwy kod. Twoja praca składa się z dwóch kroków:
@@ -156,31 +158,34 @@ Przeanalizuj poniższy błąd i wadliwy kod. """
         """
 
     @staticmethod
-    def plot_generator_prompt(plan: str) -> str:
+    def plot_generator_prompt(plan: str,available_columns: List[str]) -> str:
         """
         Tworzy prompt dla agenta, którego JEDYNYM zadaniem jest napisanie
         kodu w Pythonie do generowania wykresów.
         """
-        return LangchainAgentsPrompts.SYSTEM_PROMPT_NEXUS_ENGINEER+ f"""
-        Jesteś ekspertem od wizualizacji danych w Pythonie przy użyciu biblioteki Matplotlib. Twoim jedynym zadaniem jest napisanie fragmentu kodu w Pythonie.
-        
-        Ten kod, gdy zostanie wykonany, musi stworzyć co najmniej dwie figury `matplotlib` ilustrujące zmiany w danych opisane w poniższym planie. Każdą stworzoną figurę (obiekt `fig`) musisz dodać do listy o nazwie `figures_to_embed`.
-        
-        W środowisku wykonawczym Twojego kodu dostępne będą ramki danych `df_original` i `df_processed`.
+        return LangchainAgentsPrompts.SYSTEM_PROMPT_NEXUS_ENGINEER + f"""
+        Jesteś ekspertem od wizualizacji danych w Pythonie przy użyciu biblioteki Matplotlib.
+        Twoim jedynym zadaniem jest napisanie fragmentu kodu w Pythonie.
         
         PLAN, KTÓRY MASZ ZILUSTROWAĆ:
         {plan}
+
+        --- KRYTYCZNE INFORMACJE ---
+        DOSTĘPNE KOLUMNY W DANYCH `df_processed`, KTÓRYCH MOŻESZ UŻYĆ:
+        {available_columns}
+        --- KONIEC KRYTYCZNYCH INFORMACJI ---
         
         WAŻNE ZASADY:
-1.  Każdy wykres musi mieć tytuł i czytelne etykiety osi.
-2.  Użyj `fig.tight_layout()` przed dodaniem figury do listy.
-3.  **Używaj WYŁĄCZNIE biblioteki `matplotlib.pyplot`. Nie używaj `plotly`, `seaborn` ani żadnej innej.**
-4.  NIE importuj bibliotek. Zakładaj, że `matplotlib.pyplot as plt` i `pandas as pd` są już dostępne.
-5.  NIE twórz własnych danych. Używaj wyłącznie ramek danych `df_original` i `df_processed`.
-6.  NIE używaj `plt.show()`. Twoim zadaniem jest tylko stworzenie obiektów figur.
-7.  Każdą stworzoną figurę (`fig`) MUSISZ dodać do listy o nazwie `figures_to_embed`.
-8.  Twoja odpowiedź musi zawierać TYLKO i WYŁĄCZNIE kod Pythona.
-9.  **Twoja odpowiedź MUSI być obiektem JSON zawierającym jeden klucz: "code", którego wartością jest skrypt Pythona jako string.**
+        1.  **Generuj wykresy TYLKO dla kolumn, które znajdują się na powyższej liście dostępnych kolumn.**
+        2.  Każdy wykres musi mieć tytuł i czytelne etykiety osi.
+        3.  Użyj `fig.tight_layout()` przed dodaniem figury do listy.
+        4.  **Używaj WYŁĄCZNIE biblioteki `matplotlib.pyplot`. Nie używaj `plotly` ani `seaborn`.**
+        5.  NIE importuj bibliotek. Zakładaj, że `matplotlib.pyplot as plt` i `pandas as pd` są już dostępne.
+        6.  NIE twórz własnych danych. Używaj wyłącznie ramek danych `df_original` i `df_processed`.
+        7.  NIE używaj `plt.show()`. Twoim zadaniem jest tylko stworzenie obiektów figur.
+        8.  Każdą stworzoną figurę (`fig`) MUSISZ dodać do listy o nazwie `figures_to_embed`.
+        9.  Twoja odpowiedź musi zawierać TYLKO i WYŁĄCZNIE kod Pythona.
+        10. **Twoja odpowiedź MUSI być obiektem JSON zawierającym jeden klucz: "code", którego wartością jest skrypt Pythona jako string.**
         """
 
     @staticmethod

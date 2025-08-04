@@ -5,6 +5,8 @@ from langchain_google_vertexai import ChatVertexAI
 from langchain_anthropic import ChatAnthropic
 from tools.utils import intelligent_truncate
 from config import MAIN_AGENT,LOCATION,PROJECT_ID,CRITIC_MODEL
+from .memory_models import *
+
 #--narzedzie do przetwarzania info dla pamieci dlugotrwalej, llm agent uzywa llm!!
 def distill_memory_content(failing_code: str, error_traceback: str, debugger_analysis: str, corrected_code: str) -> dict:
     """Używa LLM do 'przedestylowania' surowych danych o błędzie i jego naprawie do zwięzłego, ustrukturyzowanego formatu."""

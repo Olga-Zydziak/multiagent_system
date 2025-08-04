@@ -1,5 +1,6 @@
 from pydantic import BaseModel, Field
 from langchain_core.tools import tool
+from .utils import TOOL_REGISTRY
 #--BaseModel
 
 class DebugReport(BaseModel):
@@ -32,6 +33,9 @@ class PlottingCode(BaseModel):
 
 
     
+class InspectToolArgs(BaseModel):
+    tool_name: str = Field(description="Nazwa funkcji/narzędzia do inspekcji, np. 'embed_plot_to_html'.")
+    
 #narzędzia dla langchain agentów    
 @tool(args_schema=CodeFixArgs)
 def propose_code_fix(analysis: str, corrected_code: str) -> None:
@@ -42,3 +46,13 @@ def propose_code_fix(analysis: str, corrected_code: str) -> None:
 def request_package_installation(package_name: str, analysis: str) -> None:
     """Użyj tego narzędzia, aby poprosić o instalację brakującej biblioteki, gdy napotkasz błąd 'ModuleNotFoundError'."""
     pass 
+
+
+@tool(args_schema=InspectToolArgs)
+def inspect_tool_code(tool_name: str) -> str:
+    """Użyj tego narzędzia, aby przeczytać kod źródłowy wewnętrznej funkcji systemowej.
+    Jest to przydatne, gdy podejrzewasz, że błąd (np. NameError) leży w narzędziu, a nie w kodzie, który analizujesz."""
+    if tool_name in TOOL_REGISTRY:
+        source_code = inspect.getsource(TOOL_REGISTRY[tool_name])
+        return f"Oto kod źródłowy narzędzia '{tool_name}':\n```python\n{source_code}\n```"
+    return f"BŁĄD: Nie znaleziono narzędzia o nazwie '{tool_name}'."

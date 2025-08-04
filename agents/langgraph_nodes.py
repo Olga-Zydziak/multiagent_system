@@ -136,7 +136,7 @@ def universal_debugger_node(state: AgentWorkflowState):
     MAIN_AGENT=state['config']['MAIN_AGENT']
     # llm = ChatAnthropic(model_name=CODE_MODEL, temperature=0.0, max_tokens=2048)
     llm = ChatVertexAI(model_name=MAIN_AGENT,temperature=0.0, project=PROJECT_ID, location=LOCATION)
-    tools = [propose_code_fix, request_package_installation]
+    tools = [propose_code_fix, request_package_installation, inspect_tool_code]
     llm_with_tools = llm.bind_tools(tools)
     prompt = LangchainAgentsPrompts.tool_based_debugger(failing_node=failing_node_name)
     error_context = f"Wadliwy Kontekst:\n```\n{state['error_context_code']}\n```\n\nBłąd:\n```\n{state['error_message']}\n```"
@@ -329,7 +329,12 @@ def summary_analyst_node(state: AgentWorkflowState) -> Dict[str, str]:
     except Exception as e:
         error_msg = f"Błąd w analityku podsumowania: {traceback.format_exc()}"
         print(f"  [BŁĄD] {error_msg}")
-        return {"error_message": error_msg, "failing_node": "summary_analyst_node"}
+        return {
+            "error_message": error_msg,
+            "failing_node": "summary_analyst_node",
+            "error_context_code": state.get('plan', 'Brak planu w stanie do analizy.'),
+            "correction_attempts": state.get("correction_attempts", 0) + 1  # <-- DODAJ TĘ LINIĘ
+        }
 
 
 def plot_generator_node(state: AgentWorkflowState) -> Dict[str, str]:
@@ -338,13 +343,19 @@ def plot_generator_node(state: AgentWorkflowState) -> Dict[str, str]:
     """
     print("--- WĘZEŁ: GENERATOR WIZUALIZACJI ---")
     try:
-        # === POPRAWKA: Użycie dedykowanego promptu ===
-        prompt = LangchainAgentsPrompts.plot_generator_prompt(plan=state['plan'])
-        MAIN_AGENT=state['config']['MAIN_AGENT']
-        # llm = ChatAnthropic(model_name=CODE_MODEL, temperature=0.0, max_tokens=2048)
-        llm = ChatVertexAI(model_name=MAIN_AGENT,temperature=0.0, project=PROJECT_ID, location=LOCATION)
-        # llm = ChatAnthropic(model_name=state['config']['CODE_MODEL'], temperature=0.0, max_tokens=2048)
+        # --- NOWY KROK: POBIERZ AKTUALNE KOLUMNY Z PRZETWORZONEGO PLIKU ---
+        df_processed_cols = pd.read_csv(state['output_path'], nrows=0).columns.tolist()
+
+        # Przekaż aktualne kolumny do promptu, aby agent wiedział, na czym pracuje
+        prompt = LangchainAgentsPrompts.plot_generator_prompt(
+            plan=state['plan'],
+            available_columns=df_processed_cols  # Przekazanie nowej informacji
+        )
+        
+        MAIN_AGENT = state['config']['MAIN_AGENT']
+        llm = ChatVertexAI(model_name=MAIN_AGENT, temperature=0.0, project=PROJECT_ID, location=LOCATION)
         structured_llm = llm.with_structured_output(PlottingCode)
+        
         response = structured_llm.invoke(prompt)
         cleaned_code = extract_python_code(response.code)
         
@@ -468,6 +479,18 @@ def meta_auditor_node(state: AgentWorkflowState):
         
         CRITIC_MODEL=state['config']['CRITIC_MODEL']
         
+        escalation_report_content = None
+        escalation_path = state.get("escalation_report_path")
+        if escalation_path:
+            print(f"  [INFO] Wykryto raport z eskalacji. Wczytywanie pliku: {escalation_path}")
+            try:
+                with open(escalation_path, 'r', encoding='utf-8') as f:
+                    escalation_report_content = f.read()
+            except Exception as e:
+                print(f"  [OSTRZEŻENIE] Nie udało się wczytać pliku z eskalacją: {e}")
+        
+        
+        
         # ... (cała logika generowania raportu audytora, tak jak w oryginale)
         # Załóżmy, że wynikiem jest zmienna 'audit_report'
         final_report_content = "Brak raportu do analizy."
@@ -480,11 +503,25 @@ def meta_auditor_node(state: AgentWorkflowState):
         prompt = LangchainAgentsPrompts.create_meta_auditor_prompt(
             source_code=state['source_code'], autogen_conversation=state['autogen_log'],
             langgraph_log=state['langgraph_log'], final_code=state.get('generated_code', 'Brak kodu'),
-            final_report=final_report_content
+            final_report=final_report_content,escalation_report=escalation_report_content
         )
         audit_report = llm.invoke(prompt).content
         # ... (zapis raportu do pliku)
 
+        
+        
+        try:
+            audit_report_path = "reports/meta_audit_report.txt"
+            print(f"  [INFO] Zapisywanie raportu z audytu do: {audit_report_path}")
+            with open(audit_report_path, "w", encoding="utf-8") as f:
+                f.write("="*50 + "\n")
+                f.write("### RAPORT Z META-AUDYTU SYSTEMU AI ###\n")
+                f.write("="*50 + "\n\n")
+                f.write(audit_report)
+            print(f"  [SUKCES] Pomyślnie zapisano raport z audytu.")
+        except Exception as e:
+            print(f"  [BŁĄD] Nie udało się zapisać raportu z audytu: {e}")
+        
         # 3. WYGENERUJ I ZAPISZ WNIOSEK META
         meta_insight_content = generate_meta_insight(audit_report)
         if meta_insight_content:
@@ -508,7 +545,7 @@ def human_escalation_node(state: AgentWorkflowState):
     print("==================================================")
     # ... (reszta kodu bez zmian)
     report_content = f"""
-Data: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+Data: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
 Problem: Przekroczono maksymalny limit ({MAX_CORRECTION_ATTEMPTS}) prób automatycznej naprawy.
 
 Ostatnia analiza debuggera:
@@ -522,7 +559,7 @@ Ostatni kod, który zawiódł:
 Pełny traceback ostatniego błędu:
 {state.get('error_message', 'Brak błędu.')}
 """
-    file_name = f"reports/human_escalation_report_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+    file_name = f"reports/human_escalation_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
     with open(file_name, "w", encoding="utf-8") as f: f.write(report_content)
     print(f"  [INFO] Raport dla człowieka został zapisany w pliku: {file_name}")
-    return {}
+    return {"escalation_report_path": file_name}
