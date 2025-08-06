@@ -5,7 +5,7 @@ from pydantic import BaseModel, Field
 import uuid
 
 class MemoryType(str, Enum):
-    SUCCESSFUL_PLAN = "SUCCESSFUL_PLAN"
+    SUCCESSFUL_WORKFLOW = "SUCCESSFUL_WORKFLOW"
     EXECUTION_ERROR = "EXECUTION_ERROR"
     SUCCESSFUL_FIX = "SUCCESSFUL_FIX"
     META_INSIGHT = "META_INSIGHT"

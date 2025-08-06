@@ -18,6 +18,7 @@ from prompts import LangchainAgentsPrompts
 from tools.utils import *
 from tools.langchain_tools import *
 from prompts import ArchitecturalRule, ArchitecturalRulesManager,ARCHITECTURAL_RULES
+from prompts_beta import PromptFactory
 from config import MAX_CORRECTION_ATTEMPTS, PROJECT_ID,LOCATION
 from memory.memory_utils import *
 from memory.memory_models import *
@@ -40,21 +41,46 @@ def schema_reader_node(state: AgentWorkflowState):
         return {"error_message": f"Błąd odczytu pliku: {e}", "failing_node": "schema_reader"}
 
 def code_generator_node(state: AgentWorkflowState):
+    """Generuje główny skrypt przetwarzający dane z użyciem structured output."""
     print("---  WĘZEŁ: GENERATOR KODU ---")
-    
-    
-    CODE_MODEL=state['config']['CODE_MODEL']
-    
-    llm = ChatAnthropic(model_name=CODE_MODEL, temperature=0.0, max_tokens=2048)
-    prompt = LangchainAgentsPrompts.code_generator(state['plan'], state['available_columns'])
-    response = llm.invoke(prompt).content
-    code = extract_python_code(response)
-    
-    print("\nAgent-Analityk wygenerował następujący kod:")
-    print("--------------------------------------------------")
-    print(code)
-    print("--------------------------------------------------")
-    return {"generated_code": code}
+    try:
+        CODE_MODEL = state['config']['CODE_MODEL']
+        
+        # ZMIANA: Znacząco zwiększamy max_tokens, aby model miał miejsce na wygenerowanie pełnego kodu.
+        llm = ChatAnthropic(model_name=CODE_MODEL, temperature=0.0, max_tokens=4096)
+        
+        # Powiązanie LLM ze schematem Pydantic, aby wymusić poprawny format wyjściowy.
+        structured_llm = llm.with_structured_output(GeneratedCode)
+        
+        prompt = PromptFactory.for_code_generator(
+            plan=state['plan'], 
+            available_columns=state['available_columns']
+        )
+        
+        # Wywołanie zwraca obiekt Pydantic, a nie surowy string.
+        response_object = structured_llm.invoke(prompt)
+        
+        # Używamy poprawnej i ujednoliconej nazwy pola: 'code'.
+        code = response_object.code
+        
+        print("\nAgent-Analityk wygenerował następujący kod:")
+        print("--------------------------------------------------")
+        print(code)
+        print("--------------------------------------------------")
+        
+        return {"generated_code": code}
+
+    except Exception as e:
+        # Dodajemy obsługę błędu, aby dać więcej kontekstu, jeśli coś pójdzie nie tak.
+        print(f"BŁĄD KRYTYCZNY w code_generator_node podczas wywołania LLM: {e}")
+        # Zwracamy błąd do stanu, aby graf mógł na niego zareagować.
+        return {
+            "error_message": f"Błąd podczas generowania kodu: {e}", 
+            "failing_node": "code_generator",
+            "error_context_code": state.get('plan', 'Brak planu w stanie do analizy.')
+        }
+
+
 
 
 def architectural_validator_node(state: AgentWorkflowState):
@@ -138,7 +164,14 @@ def universal_debugger_node(state: AgentWorkflowState):
     llm = ChatVertexAI(model_name=MAIN_AGENT,temperature=0.0, project=PROJECT_ID, location=LOCATION)
     tools = [propose_code_fix, request_package_installation, inspect_tool_code]
     llm_with_tools = llm.bind_tools(tools)
-    prompt = LangchainAgentsPrompts.tool_based_debugger(failing_node=failing_node_name,active_policies=state.get("active_policies"))
+    
+    prompt = PromptFactory.for_universal_debugger(
+    failing_node=failing_node_name,
+    error_message=state['error_message'],
+    code_context=state['error_context_code'],
+    active_policies=state.get("active_policies")
+    )
+    
     error_context = f"Wadliwy Kontekst:\n```\n{state['error_context_code']}\n```\n\nBłąd:\n```\n{state['error_message']}\n```"
     response = llm_with_tools.invoke(prompt + error_context)
     if not response.tool_calls:
@@ -262,37 +295,7 @@ def package_installer_node(state: AgentWorkflowState):
     else:
         return {"error_message": f"Operacja na pakiecie '{package_name}' nie powiodła się.", "failing_node": "package_installer"}
 
-def commit_memory_node(state: AgentWorkflowState) -> Dict[str, Any]:
-    """Zapisuje skonsolidowaną wiedzę do pamięci po udanej naprawie kodu."""
-    session = state.get('pending_fix_session')
-    
-    # Jeśli nie ma sesji (np. kod zadziałał za 1. razem), nie rób nic
-    if not session or not session.get("fix_attempts"):
-        return {"pending_fix_session": None}
 
-    print("--- WĘZEŁ: ZATWIERDZANIE WIEDZY W PAMIĘCI ---")
-    
-    distilled_content = distill_full_fix_session(
-        initial_error=session['initial_error'],
-        fix_attempts=session['fix_attempts'],
-        successful_code=state['generated_code']
-    )
-    
-    memory_client = state['memory_client']
-    final_record = MemoryRecord(
-        run_id=state['run_id'],
-        memory_type=MemoryType.SUCCESSFUL_FIX, # Teraz to jest prawdziwy sukces
-        dataset_signature=state['dataset_signature'],
-        source_node="commit_memory_node",
-        content=distilled_content,
-        metadata={"total_attempts": len(session['fix_attempts'])}
-    )
-    memory_client.add_memory(final_record)
-    
-    # Wyczyść sesję po udanym zapisie
-    return {"pending_fix_session": None} 
-
-    
     
 def summary_analyst_node(state: AgentWorkflowState) -> Dict[str, str]:
     """
@@ -313,10 +316,10 @@ def summary_analyst_node(state: AgentWorkflowState) -> Dict[str, str]:
         processed_summary = f"Podsumowanie danych PRZETWORZONYCH:\n{df_processed.describe().to_string()}\n{processed_info_buf.getvalue()}"
 
         # === POPRAWKA: Użycie dedykowanego promptu ===
-        prompt = LangchainAgentsPrompts.summary_analyst_prompt(
-            plan=state['plan'],
-            original_summary=original_summary,
-            processed_summary=processed_summary
+        prompt = PromptFactory.for_summary_analyst(
+        plan=state['plan'],
+        original_summary=original_summary,
+        processed_summary=processed_summary
         )
         
         llm = ChatAnthropic(model_name=state['config']['CODE_MODEL'], temperature=0.0, max_tokens=1024)
@@ -347,9 +350,9 @@ def plot_generator_node(state: AgentWorkflowState) -> Dict[str, str]:
         df_processed_cols = pd.read_csv(state['output_path'], nrows=0).columns.tolist()
 
         # Przekaż aktualne kolumny do promptu, aby agent wiedział, na czym pracuje
-        prompt = LangchainAgentsPrompts.plot_generator_prompt(
-            plan=state['plan'],
-            available_columns=df_processed_cols  # Przekazanie nowej informacji
+        prompt = PromptFactory.for_plot_generator(
+        plan=state['plan'],
+        available_columns=df_processed_cols
         )
         
         MAIN_AGENT = state['config']['MAIN_AGENT']
@@ -462,32 +465,7 @@ def sync_report_code_node(state: AgentWorkflowState):
 def meta_auditor_node(state: AgentWorkflowState):
     """Uruchamia audytora ORAZ zapisuje wspomnienia o sukcesie i wnioski META."""
     print("\n" + "="*80 + "\n### ### FAZA 3: META-AUDYT I KONSOLIDACJA WIEDZY ### ###\n" + "="*80 + "\n")
-    memory_client = state['memory_client']
-
-    if not state.get("escalation_report_path"):
-        try:
-            print("  [INFO] Uruchamiam proces destylacji wspomnienia o sukcesie...")
-            # --- ZMIANA 2: Zabezpieczenie przed limitem tokenów ---
-            truncated_plan = intelligent_truncate(state.get('plan', ''), 3000)
-            distilled_content = distill_success_memory(final_plan=truncated_plan)
-            
-            if distilled_content and distilled_content.get("key_insight"):
-                # Dodatkowe zabezpieczenie dla wyniku destylacji
-                distilled_content["key_insight"] = intelligent_truncate(distilled_content["key_insight"], 2000)
-
-                plan_record = MemoryRecord(
-                    run_id=state['run_id'],
-                    memory_type=MemoryType.SUCCESSFUL_PLAN,
-                    dataset_signature=state['dataset_signature'],
-                    source_node="meta_auditor_node",
-                    content=distilled_content,
-                    metadata={"importance_score": 0.8}
-                )
-                memory_client.add_memory(plan_record)
-        except Exception as e:
-            print(f"  [BŁĄD ZAPISU PAMIĘCI] Nie udało się zapisać udanego planu: {e}")
     
-    # 2. Uruchom audytora (logika bez zmian)
     try:
         
         CRITIC_MODEL=state['config']['CRITIC_MODEL']
@@ -513,18 +491,32 @@ def meta_auditor_node(state: AgentWorkflowState):
         except Exception: pass
         
         llm = ChatAnthropic(model_name=CRITIC_MODEL, temperature=0.0, max_tokens=2048)
-        prompt = LangchainAgentsPrompts.create_meta_auditor_prompt(
-            source_code=intelligent_truncate(state['source_code'], 8000),
-            autogen_conversation=intelligent_truncate(state['autogen_log'], 6000),
-            langgraph_log=intelligent_truncate(state.get('langgraph_log', ''), 6000),
+        structured_llm = llm.with_structured_output(AuditReport)
+        
+        prompt = PromptFactory.for_meta_auditor(
+            source_code=intelligent_truncate(state['source_code'], 2000),
+            autogen_log=intelligent_truncate(state['autogen_log'], 1500),
+            langgraph_log=intelligent_truncate(state.get('langgraph_log', ''), 1500),
             final_code=state.get('generated_code', 'Brak kodu'),
             final_report=final_report_content,
             escalation_report=escalation_report_content
         )
-        audit_report = llm.invoke(prompt).content
+        report_object = structured_llm.invoke(prompt)
         # ... (zapis raportu do pliku)
 
-        
+        audit_report = f"""
+1.  **Ocena Planowania:**
+    {report_object.planning_evaluation}
+
+2.  **Ocena Wykonania:**
+    {report_object.execution_evaluation}
+
+3.  **Ocena Jakości Promptów (Analiza Meta):**
+    {report_object.prompt_quality_analysis}
+
+4.  **Rekomendacje do Samodoskonalenia:**
+    {report_object.recommendations}
+"""
         
         try:
             audit_report_path = "reports/meta_audit_report.txt"
@@ -540,17 +532,11 @@ def meta_auditor_node(state: AgentWorkflowState):
         
         # 3. WYGENERUJ I ZAPISZ WNIOSEK META
         meta_insight_content = generate_meta_insight(audit_report)
-        if meta_insight_content:
-            insight_record = MemoryRecord(
-                run_id=state['run_id'], memory_type=MemoryType.META_INSIGHT,
-                dataset_signature=state['dataset_signature'], source_node="meta_auditor_node",
-                content=meta_insight_content, metadata={"importance_score": 1.0}
-            )
-            memory_client.add_memory(insight_record)
+        return {"meta_insight_content": meta_insight_content}
 
     except Exception as e:
         print(f"BŁĄD KRYTYCZNY podczas meta-audytu: {e}")
-    return {}
+        return {"meta_insight_content": None}
 
     
     
@@ -579,3 +565,71 @@ Pełny traceback ostatniego błędu:
     with open(file_name, "w", encoding="utf-8") as f: f.write(report_content)
     print(f"  [INFO] Raport dla człowieka został zapisany w pliku: {file_name}")
     return {"escalation_report_path": file_name}
+
+
+
+
+def memory_consolidation_node(state: AgentWorkflowState):
+    """
+    Finalny węzeł grafu, odpowiedzialny za analizę całego przebiegu
+    i zapisanie odpowiedniego rodzaju wspomnienia do pamięci długotrwałej.
+    """
+    print("\n" + "="*80 + "\n### ### FAZA 4: KONSOLIDACJA WIEDZY W PAMIĘCI ### ###\n" + "="*80 + "\n")
+    memory_client = state['memory_client']
+    run_id = state['run_id']
+    dataset_signature = state['dataset_signature']
+    
+    # Scenariusz 1: Nastąpiła udana naprawa błędu w trakcie procesu.
+    fix_session = state.get('pending_fix_session')
+    if fix_session and fix_session.get("fix_attempts"):
+        print("  [PAMIĘĆ] Wykryto udaną sesję naprawczą. Zapisuję wspomnienie typu SUCCESSFUL_FIX.")
+        distilled_content = distill_fix_memory(
+            initial_error=fix_session['initial_error'],
+            fix_attempts=fix_session['fix_attempts'],
+            successful_code=state['generated_code'] # lub inny odpowiedni kod
+        )
+        record = MemoryRecord(
+            run_id=run_id,
+            memory_type=MemoryType.SUCCESSFUL_FIX,
+            dataset_signature=dataset_signature,
+            source_node="memory_consolidation_node",
+            content=distilled_content,
+            metadata={"total_attempts": len(fix_session['fix_attempts'])}
+        )
+        memory_client.add_memory(record)
+
+    # Scenariusz 2: Proces zakończył się pełnym sukcesem bez żadnych błędów.
+    elif not state.get("escalation_report_path"):
+        print("  [PAMIĘĆ] Wykryto pomyślny przebieg bez błędów. Zapisuję wspomnienie typu SUCCESSFUL_WORKFLOW.")
+        distilled_content = distill_successful_workflow(
+            plan=state.get('plan', ''),
+            final_code=state.get('generated_code', ''),
+            langgraph_log=state.get('langgraph_log', '')
+        )
+        record = MemoryRecord(
+            run_id=run_id,
+            memory_type=MemoryType.SUCCESSFUL_WORKFLOW,
+            dataset_signature=dataset_signature,
+            source_node="memory_consolidation_node",
+            content=distilled_content,
+            metadata={"importance_score": 0.9}
+        )
+        memory_client.add_memory(record)
+
+    # Scenariusz 3: Nastąpiła eskalacja do człowieka lub inny nieprzewidziany błąd.
+    else:
+        print("  [PAMIĘĆ] Wykryto eskalację lub nieudany przebieg. Nie zapisuję wspomnienia o sukcesie.")
+        # W przyszłości można tu dodać logikę zapisu wspomnienia o porażce.
+
+    # Na samym końcu zapisujemy wniosek z audytu, jeśli istnieje
+    meta_insight_content = state.get("meta_insight_content") # Zakładamy, że audytor umieścił to w stanie
+    if meta_insight_content:
+        print("  [PAMIĘĆ] Zapisuję wniosek META z audytu.")
+        insight_record = MemoryRecord(
+            run_id=run_id, memory_type=MemoryType.META_INSIGHT,
+            dataset_signature=dataset_signature, source_node="meta_auditor_node",
+            content=meta_insight_content, metadata={"importance_score": 1.0}
+        )
+        memory_client.add_memory(insight_record)
+        
+    return {}

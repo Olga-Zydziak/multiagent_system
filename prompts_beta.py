@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field
-from typing import List, Dict, Any, Optional
+from typing import TypedDict, List, Callable, Dict, Optional, Union, Any
 
 # =================================================================================
 # sekcja 1: DYREKTYWY SYSTEMOWE (PERSONY NADRZĘDNE)
@@ -72,7 +72,7 @@ class PromptFactory:
 
     
     @staticmethod
-    def Trigger_prompt() -> str:
+    def for_trigger() -> str:
 
         return f"""Jesteś 'Strażnikiem Danych'. Twoim jedynym zadaniem jest analiza podsumowania danych (nazwy kolumn, pierwsze wiersze).
     Na tej podstawie musisz podjąć decyzję: czy te dane mają charakter **tabularyczny** (jak plik CSV lub tabela bazy danych)?
@@ -194,26 +194,27 @@ PLAN_AKCEPTOWANY_PRZEJSCIE_DO_IMPLEMENTACJI
         }
         config = PromptConfig(
             persona="Jesteś analitykiem danych piszącym zwięzłe, menedżerskie podsumowania. [cite: 93]",
-            task="Napisz podsumowanie w formacie HTML, które podkreśla kluczowe korzyści z przeprowadzonej transformacji danych. Skup się na zmianach w brakujących danych, typach kolumn i ogólnej jakości danych. [cite: 94, 95]",
-            output_format="Twoja odpowiedź musi być **tylko i wyłącznie** kodem HTML, gotowym do wstawienia do raportu. Używaj tagów `<h2>`, `<h4>`, `<ul>`, `<li>`. [cite: 96]"
+            task="Napisz podsumowanie w formacie HTML, które podkreśla kluczowe korzyści z przeprowadzonej transformacji danych. Skup się na zmianach w brakujących danych, typach kolumn i ogólnej jakości danych.",
+            output_format="Twoja odpowiedź musi być **tylko i wyłącznie** kodem HTML, gotowym do wstawienia do raportu. Używaj tagów `<h2>`, `<h4>`, `<ul>`, `<li>`. "
         )
         return PromptFactory._build_prompt(SYSTEM_PROMPT_ANALYST, config, context)
 
     @staticmethod
-    def for_meta_auditor(source_code: str, autogen_log: str, langgraph_log: str, final_code: str, escalation_report: Optional[str]) -> str:
+    def for_meta_auditor(source_code: str, autogen_log: str, langgraph_log: str, final_code: str,final_report: str, escalation_report: Optional[str]) -> str:
         """Prompt dla agenta-audytora całego procesu."""
         context = {
             "system_source_code": source_code,
             "planning_phase_log": autogen_log,
             "execution_phase_log": langgraph_log,
             "final_generated_code": final_code,
+            "final_report_html": final_report,
             "human_escalation_report": escalation_report or "Brak eskalacji - proces zakończył się autonomicznie."
         }
         config = PromptConfig(
-            persona="Jesteś 'Głównym Audytorem Systemów AI'. Twoim zadaniem jest bezwzględnie krytyczna ocena całego przebiegu procesu AI w celu jego samodoskonalenia. [cite: 109]",
+            persona="Jesteś 'Głównym Audytorem Systemów AI'. Twoim zadaniem jest bezwzględnie krytyczna ocena całego przebiegu procesu AI w celu jego samodoskonalenia.",
             task="Przeanalizuj wszystkie dostępne dane i odpowiedz na każde pytanie z poniższej listy kontrolnej audytu. Bądź surowy, ale sprawiedliwy.",
             rules=[
-                "Jeśli istnieje `human_escalation_report`, jego analiza jest Twoim absolutnym priorytetem. [cite: 107]",
+                "Jeśli istnieje `human_escalation_report`, jego analiza jest Twoim absolutnym priorytetem.",
                 "Twoje rekomendacje muszą być konkretne, możliwe do zaimplementowania i odnosić się do konkretnych agentów lub promptów."
             ],
             output_format="""Odpowiedz w formie zwięzłego raportu tekstowego, używając poniższych nagłówków:
@@ -226,3 +227,21 @@ PLAN_AKCEPTOWANY_PRZEJSCIE_DO_IMPLEMENTACJI
 
         )
         return PromptFactory._build_prompt(SYSTEM_PROMPT_ANALYST, config, context)
+    
+    
+    
+class ArchitecturalRule(TypedDict):
+    id: str; description: str; check: Callable[[str], bool]; error_message: str
+
+ARCHITECTURAL_RULES: List[ArchitecturalRule] = [
+    {"id": "NO_MAIN_BLOCK", "description": "Żadnego bloku `if __name__ == '__main__':`.", "check": lambda code: bool(re.search(r'if\s+__name__\s*==\s*["\']__main__["\']\s*:', code)), "error_message": "Wykryto niedozwolony blok `if __name__ == '__main__':`."},
+    {"id": "NO_ARGPARSE", "description": "Żadnego `argparse` ani `sys.argv`.", "check": lambda code: bool(re.search(r'import\s+argparse', code)), "error_message": "Wykryto niedozwolony import modułu `argparse`."},
+    {"id": "SINGLE_FUNCTION_LOGIC", "description": "Cała logika musi być w funkcji `process_data(input_path: str, output_path: str)`.", "check": lambda code: "def process_data(input_path: str, output_path: str)" not in code, "error_message": "Brak wymaganej definicji funkcji `process_data(input_path: str, output_path: str)`."},
+    {"id": "ENDS_WITH_CALL", "description": "Skrypt musi kończyć się **dokładnie jedną linią** w formacie: `process_data(input_path, output_path)  # noqa: F821`. Komentarz `# noqa: F821` jest **obowiązkowy**.", "check": lambda code: not re.search(r'^\s*process_data\(input_path,\s*output_path\)\s*#\s*noqa:\s*F821\s*$', [line for line in code.strip().split('\n') if line.strip()][-1]), "error_message": "Skrypt nie kończy się wymaganym wywołaniem `process_data(input_path, output_path)  # noqa: F821`."},
+]
+
+class ArchitecturalRulesManager:
+    @staticmethod
+    def get_rules_as_string() -> str:
+        rules_text = "\n".join(f"        - {rule['description']}" for rule in ARCHITECTURAL_RULES)
+        return f"<ARCHITECTURAL_RULES>\n    **Krytyczne Wymagania Dotyczące Struktury Kodu:**\n{rules_text}\n</ARCHITECTURAL_RULES>"

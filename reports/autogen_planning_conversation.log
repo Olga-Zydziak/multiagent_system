@@ -16,202 +16,308 @@ Pierwsze 5 wierszy:
 3      TXN_12447  USER_2617              254.32   ATM Withdrawal  2023-12-07 00:31:00         76807.20      Tablet  New York          Clothing                0                             0                        8                     182.48                            4        Visa        76               1311.86                   OTP      0.7935           0            1
 4      TXN_39489  USER_2014               31.28              POS  2023-11-11 23:44:00         92354.66      Mobile    Mumbai       Electronics                0                             1                       14                     328.69                            4  Mastercard       140                966.98              Password      0.3819           1            1
 
+--- AKTYWNE POLITYKI SYSTEMOWE (NAJWYŻSZY PRIORYTET) ---
+- Dodać do promptu Krytyka wyraźne instrukcje: "Jako Krytyk, Twoim zadaniem jest rygorystyczna analiza planu. Dla każdego kroku: 1. Zidentyfikuj potencjalne problemy i słabe punkty 2. Zaproponuj co najmniej jedną alternatywę 3. Oceń wpływ na wydajność i jakość wyników 4. Przypisz poziom ryzyka (niski/średni/wysoki) do każdego zidentyfikowanego problemu"
+- Dokończyć implementację systemu pamięci w config.py, usuwając zakomentowane fragmenty i zapewniając pełną funkcjonalność przechowywania i odzyskiwania informacji z poprzednich sesji.
+- Zmodyfikować architekturę systemu w `langgraph_nodes.py`, implementując obowiązkową pętlę iteracyjną między Plannerem a Krytykiem, która wymaga co najmniej jednej rundy poprawek przed zaakceptowaniem planu.
+
+--- INSPIRACJE Z POPRZEDNICH URUCHOMIEŃ ---
+SPRAWDZONY WNIOSEK Z PROCESU: Kluczowym wnioskiem z fazy planowania było zróżnicowanie strategii skalowania cech: zaplanowano użycie `RobustScaler` dla kolumn z istotnymi wartościami odstającymi (`Transaction_Amount`, `Account_Balance`) oraz `StandardScaler` dla pozostałych cech numerycznych. Takie podejście proaktywnie adresuje problem outlierów.
+
 --- Komunikat od: TriggerAgent ---
 Dane są tabularyczne. Przekazuję do PlannerAgent w celu stworzenia planu analizy.
 
 --- Komunikat od: PlannerAgent ---
-Jako Architekt Planu, po zapoznaniu się ze strukturą i podglądem dostarczonych danych, przedstawiam szczegółowy plan ich przygotowania. Celem jest przekształcenie surowych danych w czysty, spójny i zoptymalizowany zbiór, gotowy do przeprowadzenia analizy eksploracyjnej oraz budowy modeli predykcyjnych (np. wykrywania oszustw).
+**CEL:** Stworzenie planu przygotowania danych do modelowania predykcyjnego w celu wykrywania oszustw.
+**ANALIZA:** Dane wejściowe zawierają mieszankę typów danych: numeryczne, kategoryczne, binarne oraz znacznik czasu. Wymagane jest czyszczenie, inżynieria cech i skalowanie w celu przygotowania spójnego zbioru danych dla algorytmów uczenia maszynowego. Inspiracja dotycząca zróżnicowanego skalowania jest trafna i zostanie zaadaptowana.
+**WNIOSEK:** Poniższy plan przedstawia sekwencję kroków niezbędnych do transformacji surowych danych w gotowy do analizy zbiór cech.
 
-Oto proponowany, numerowany plan działania:
+---
+### **PLAN PRZYGOTOWANIA DANYCH [cite: 41, 56]**
 
-***
+**Faza 1: Wstępna inspekcja i walidacja**
 
-### **Plan Czyszczenia i Przygotowania Danych Transakcyjnych**
+1.  **Wczytanie danych:** Załaduj zbiór danych do struktury DataFrame biblioteki pandas.
+2.  **Weryfikacja integralności:** Wykonaj wstępną analizę za pomocą `.info()`, `.describe(include='all')` oraz `.isnull().sum()`, aby zidentyfikować podstawowe typy danych, statystyki oraz liczbę brakujących wartości w każdej kolumnie.
 
-**Cel:** Przygotowanie danych do analizy i modelowania klasyfikacyjnego w celu identyfikacji transakcji typu "fraud".
+**Faza 2: Czyszczenie i korekta typów danych**
 
-**1. Wstępna Analiza i Weryfikacja Integralności Danych**
-*   **1.1. Wczytanie danych:** Załadowanie zbioru danych do struktury DataFrame.
-*   **1.2. Podstawowe informacje:** Użycie funkcji `.info()` w celu weryfikacji wstępnych typów danych i liczby niepustych wartości w każdej kolumnie. Pozwoli to na szybkie zidentyfikowanie kolumn z potencjalnymi brakami.
-*   **1.3. Statystyki opisowe:** Wygenerowanie statystyk opisowych za pomocą `.describe(include='all')` dla kolumn numerycznych (średnia, mediana, odchylenie standardowe, kwantyle) i kategorycznych (liczba unikalnych wartości, najczęstsza wartość).
-*   **1.4. Weryfikacja duplikatów:** Sprawdzenie, czy w kolumnie `Transaction_ID` istnieją zduplikowane wartości. Każda transakcja powinna być unikalna. W przypadku znalezienia duplikatów, należy je usunąć.
+3.  **Konwersja `Timestamp`:** Przekształć kolumnę `Timestamp` z typu `object` (string) na typ `datetime`. Umożliwi to późniejszą ekstrakcję cech czasowych.
+4.  **Obsługa brakujących wartości (Imputacja):**
+    *   Dla kolumn numerycznych (`Transaction_Amount`, `Account_Balance`, `Avg_Transaction_Amount_7d`, `Transaction_Distance`, `Risk_Score`): Uzupełnij brakujące wartości medianą, aby zminimalizować wpływ wartości odstających.
+    *   Dla kolumn kategorycznych (`Device_Type`, `Location`, `Merchant_Category`, `Card_Type`, `Authentication_Method`): Uzupełnij brakujące wartości najczęściej występującą wartością (modą).
+5.  **Zarządzanie identyfikatorami:** Zidentyfikuj kolumny `Transaction_ID` i `User_ID`. Kolumna `Transaction_ID` zostanie usunięta, ponieważ nie posiada wartości predykcyjnej. Kolumna `User_ID` zostanie zachowana tymczasowo na potrzeby inżynierii cech, a następnie usunięta.
 
-**2. Obsługa Brakujących Wartości (Missing Values)**
-*   **2.1. Identyfikacja:** Dokładne zliczenie brakujących wartości (`NaN`, `None`) w każdej kolumnie.
-*   **2.2. Strategia imputacji:**
-    *   **Kolumny numeryczne (`Transaction_Amount`, `Account_Balance`, `Avg_Transaction_Amount_7d`, `Transaction_Distance`, `Risk_Score`, `Card_Age`):** W przypadku niewielkiej liczby braków (<5%), zastosowanie imputacji **medianą**. Mediana jest bardziej odporna na wartości odstające niż średnia, co jest kluczowe w danych finansowych.
-    *   **Kolumny kategoryczne (`Location`, `Merchant_Category`, `Device_Type`, `Card_Type`, `Authentication_Method`):** W przypadku braków, zastosowanie imputacji **modą** (najczęściej występującą wartością) lub utworzenie nowej kategorii `'Unknown'`.
-    *   **Kolumny o wysokim odsetku braków:** Jeśli jakakolwiek kolumna posiada > 60% brakujących wartości, zostanie ona usunięta, ponieważ jej imputacja mogłaby wprowadzić zbyt dużo szumu do modelu.
+**Faza 3: Inżynieria cech (Feature Engineering)**
 
-**3. Weryfikacja i Konwersja Typów Danych**
-*   **3.1. Konwersja kolumny `Timestamp`:** Zmiana typu danych kolumny `Timestamp` z `object` (string) na `datetime`. Jest to kluczowe dla dalszej inżynierii cech.
-*   **3.2. Weryfikacja kolumn numerycznych:** Upewnienie się, że wszystkie kolumny, które powinny być numeryczne (np. `Transaction_Amount`, `Account_Balance`), mają odpowiedni typ (`float` lub `int`), a nie `object`.
-*   **3.3. Weryfikacja kolumn binarnych:** Sprawdzenie, czy kolumny binarne (`IP_Address_Flag`, `Previous_Fraudulent_Activity`, `Is_Weekend`, `Fraud_Label`) mają typ `int` (0/1).
+6.  **Ekstrakcja cech czasowych:** Z przekonwertowanej kolumny `Timestamp` utwórz nowe cechy numeryczne:
+    *   `Transaction_Hour` (godzina transakcji)
+    *   `Transaction_DayOfWeek` (dzień tygodnia)
+    *   `Transaction_Month` (miesiąc)
+7.  **Usunięcie oryginalnego `Timestamp`:** Po ekstrakcji cech usuń oryginalną kolumnę `Timestamp`, aby uniknąć redundancji.
+8.  **Usunięcie `User_ID`:** Po ewentualnym wykorzystaniu do stworzenia cech zagregowanych (np. historia transakcji użytkownika, co wykracza poza ten plan, ale jest możliwe), usuń kolumnę `User_ID`.
 
-**4. Inżynieria Cech (Feature Engineering)**
-*   **4.1. Cechy oparte na dacie i czasie (z `Timestamp`):**
-    *   `Godzina_Transakcji`: Ekstrakcja godziny z `Timestamp`. Wzorce oszustw często zależą od pory dnia (np. transakcje w środku nocy).
-    *   `Dzien_Tygodnia`: Ekstrakcja dnia tygodnia (0-6). Może to pomóc w identyfikacji wzorców weekendowych vs. w dni robocze (chociaż istnieje już flaga `Is_Weekend`, ta cecha da więcej szczegółów).
-    *   `Dzien_Miesiaca`: Ekstrakcja dnia miesiąca. Może być skorelowane z cyklami wypłat.
-*   **4.2. Cechy relacyjne:**
-    *   `Stosunek_Kwoty_Do_Salda`: Obliczenie stosunku `Transaction_Amount` do `Account_Balance`. Wysoki stosunek może być sygnałem ostrzegawczym. Należy obsłużyć dzielenie przez zero, jeśli `Account_Balance` może wynosić 0.
-    *   `Odchylenie_Od_Sredniej_7d`: Obliczenie różnicy `Transaction_Amount - Avg_Transaction_Amount_7d`. Wskaże, jak bardzo bieżąca transakcja odbiega od niedawnego zachowania użytkownika.
-*   **4.3. Kodowanie zmiennych kategorycznych:**
-    *   Zastosowanie **One-Hot Encoding** dla zmiennych kategorycznych o niskiej kardynalności (małej liczbie unikalnych wartości), takich jak `Transaction_Type`, `Device_Type`, `Card_Type`, `Authentication_Method`.
-    *   Dla zmiennych o potencjalnie wysokiej kardynalności (`Location`, `Merchant_Category`), początkowo również zostanie zastosowany One-Hot Encoding, ale z zastrzeżeniem, że w przypadku zbyt dużej liczby nowych kolumn, rozważone zostanie grupowanie rzadszych kategorii lub użycie technik takich jak Target Encoding.
+**Faza 4: Kodowanie, obsługa wartości odstających i skalowanie**
 
-**5. Wykrywanie i Obsługa Wartości Odstających (Outliers)**
-*   **5.1. Identyfikacja:** Analiza dystrybucji kluczowych zmiennych numerycznych (`Transaction_Amount`, `Account_Balance`, `Transaction_Distance`) za pomocą histogramów i wykresów pudełkowych.
-*   **5.2. Strategia obsługi:** Zastosowanie metody **kwantyli (capping/winsorization)**. Wartości poniżej 1. percentyla i powyżej 99. percentyla zostaną "spłaszczone" do wartości granicznych tych percentyli. Jest to bezpieczniejsza metoda niż usuwanie, ponieważ wartości odstające w danych o oszustwach mogą być właśnie tymi, których szukamy. Ta technika ograniczy ich wpływ na skalowanie i model, nie tracąc przy tym informacji o ich wystąpieniu.
+9.  **Kodowanie zmiennych kategorycznych:** Zastosuj metodę One-Hot Encoding dla następujących kolumn kategorycznych o niskiej kardynalności: `Transaction_Type`, `Device_Type`, `Location`, `Merchant_Category`, `Card_Type`, `Authentication_Method`.
+10. **Obsługa wartości odstających:** Dla kolumn zidentyfikowanych jako podatne na wartości skrajne (`Transaction_Amount`, `Account_Balance`, `Transaction_Distance`), zastosuj metodę Winsoryzacji na poziomie 99. percentyla, aby ograniczyć wpływ ekstremalnych wartości bez ich całkowitego usuwania.
+11. **Skalowanie cech numerycznych (Adaptacja inspiracji):**
+    *   **RobustScaler:** Zastosuj `RobustScaler` dla cech z istotnymi wartościami odstającymi (nawet po Winsoryzacji): `Transaction_Amount`, `Account_Balance`, `Transaction_Distance`.
+    *   **StandardScaler:** Zastosuj `StandardScaler` dla pozostałych cech numerycznych, w tym nowo utworzonych: `Daily_Transaction_Count`, `Avg_Transaction_Amount_7d`, `Failed_Transaction_Count_7d`, `Card_Age`, `Risk_Score`, `Transaction_Hour`, `Transaction_DayOfWeek`, `Transaction_Month`.
 
-**6. Skalowanie Danych**
-*   **6.1. Uzasadnienie:** Wiele algorytmów uczenia maszynowego (np. Regresja Logistyczna, SVM, Sieci Neuronowe) jest wrażliwych na skalę cech. Skalowanie zapewnia, że wszystkie cechy mają podobny zakres, co poprawia zbieżność i wydajność modeli.
-*   **6.2. Metoda:** Zastosowanie **`StandardScaler`** (standaryzacja Z-score) na wszystkich cechach numerycznych (po obsłudze outlierów i inżynierii cech). Standaryzacja przekształci dane tak, aby miały średnią równą 0 i odchylenie standardowe równe 1.
+**Faza 5: Finalizacja**
 
-**7. Finalizacja Zbioru Danych**
-*   **7.1. Usunięcie zbędnych kolumn:** Usunięcie oryginalnych kolumn, które zostały przetworzone lub nie będą używane w modelu, tj. `Transaction_ID`, `User_ID` (chyba że będzie używany do grupowania w bardziej zaawansowanych modelach), `Timestamp` (po ekstrakcji cech).
-*   **7.2. Ostateczna weryfikacja:** Sprawdzenie finalnego kształtu zbioru danych, typów danych i braku wartości `NaN`.
-*   **7.3. Podział na zbiór treningowy i testowy:** Podział danych na zbiór treningowy i testowy (np. w proporcji 80/20) z zachowaniem proporcji klasy docelowej (`Fraud_Label`) za pomocą stratyfikacji.
-
-***
-
-Powyższy plan jest kompleksowy i stanowi solidną podstawę do przygotowania danych. Jestem gotowy na ewentualne uwagi i sugestie od CriticAgenta.
+12. **Separacja zmiennej docelowej:** Oddziel zbiór cech (X) od zmiennej docelowej (y), którą jest `Fraud_Label`.
+13. **Ostateczna weryfikacja:** Sprawdź finalny zbiór cech (X) pod kątem braku wartości `NaN` oraz upewnij się, że wszystkie kolumny są numeryczne i gotowe do użycia w modelu.
 
 --- Komunikat od: CriticAgent ---
-Analizuję przedstawiony plan.
+Jako Krytyk, Twoim zadaniem jest rygorystyczna analiza planu. Dla każdego kroku: 1. Zidentyfikuj potencjalne problemy i słabe punkty 2. Zaproponuj co najmniej jedną alternatywę 3. Oceń wpływ na wydajność i jakość wyników 4. Przypisz poziom ryzyka (niski/średni/wysoki) do każdego zidentyfikowanego problemu
 
-Plan jest logiczny i kompleksowy, jednak w kilku miejscach narusza kluczowe zasady prostoty i modułowości, co może utrudnić weryfikację i debugowanie. Wprowadzam następujące uwagi w celu jego poprawy.
+### Analiza krytyczna planu
 
-**1. Zbyt złożona Inżynieria Cech (Naruszenie zasady "Jedna zmiana na raz")**
+#### Faza 2: Czyszczenie i korekta typów danych
 
-*   **Problem:** Kroki 4.1 i 4.2 proponują stworzenie wielu nowych, niezależnych cech w ramach jednego podpunktu. Krok 4.1 tworzy trzy cechy czasowe, a 4.2 dwie cechy relacyjne. Takie podejście utrudnia śledzenie zmian i debugowanie w przypadku, gdyby jedna z transformacji zawiodła.
-*   **Sugestia:** Rozbij te kroki na mniejsze, atomowe operacje. Każda nowa cecha powinna być tworzona w osobnym, dedykowanym kroku.
-    *   Zamiast jednego kroku 4.1, stwórz trzy osobne: "4.1. Stwórz cechę `Godzina_Transakcji`", "4.2. Stwórz cechę `Dzien_Tygodnia`", itd.
-    *   Podobnie, rozbij krok 4.2 na dwa osobne kroki dla `Stosunek_Kwoty_Do_Salda` i `Odchylenie_Od_Sredniej_7d`. Umożliwi to np. dedykowaną obsługę błędu dzielenia przez zero przy tworzeniu pierwszej z nich.
+**Krok 4: Obsługa brakujących wartości (Imputacja)**
+- **Problem:** Plan łączy imputację dla wielu kolumn w jednym kroku i używa prostych metod statystycznych (mediana/moda) dla wszystkich kolumn danego typu.
+- **Alternatywa:** Podzielić na osobne kroki dla każdej kategorii kolumn. Rozważyć bardziej zaawansowane metody imputacji dla niektórych kolumn, szczególnie zależnych od kontekstu biznesowego.
+- **Wpływ:** Nieodpowiednia imputacja może znacząco zniekształcić dane i prowadzić do błędnych predykcji.
+- **Poziom ryzyka:** Średni
 
-**2. Zbyt agresywne Kodowanie Zmiennych Kategorycznych (Naruszenie zasady "Jedna zmiana na raz")**
+#### Faza 3: Inżynieria cech
 
-*   **Problem:** Krok 4.3, dotyczący kodowania zmiennych kategorycznych, jest zbyt szeroki. Zastosowanie One-Hot Encoding do wszystkich wymienionych zmiennych naraz, zwłaszcza tych o potencjalnie wysokiej kardynalności (`Location`, `Merchant_Category`), jest ryzykowne. Może to doprowadzić do niekontrolowanej "eksplozji" liczby kolumn i utrudnić interpretację.
-*   **Sugestia:** Podziel ten proces na co najmniej dwa etapy.
-    *   **Etap 1:** Zastosuj One-Hot Encoding tylko do zmiennych o gwarantowanej niskiej liczbie unikalnych wartości, np. `Transaction_Type`, `Device_Type`, `Card_Type`, `Authentication_Method`.
-    *   **Etap 2 (osobny krok):** Przeprowadź analizę kardynalności dla `Location` i `Merchant_Category`. Jeśli liczba unikalnych wartości jest wysoka (np. >15), zastosuj strategię redukcji, np. grupując najrzadsze kategorie w jedną wspólną kategorię `'Other'`, a dopiero potem zastosuj One-Hot Encoding. To musi być świadoma decyzja podjęta w osobnym kroku.
+**Krok 6: Ekstrakcja cech czasowych**
+- **Problem:** Plan nie analizuje znaczenia wydobywanych cech czasowych w kontekście wykrywania oszustw.
+- **Alternatywa:** Oprócz wymienionych, dodać cechę "czy transakcja nastąpiła w nocy" (np. między 23:00-5:00), co może być silnym predyktorem oszustw.
+- **Wpływ:** Pominięcie istotnych cech czasowych może zmniejszyć skuteczność modelu.
+- **Poziom ryzyka:** Niski
 
-**3. Grupowa obsługa wartości odstających (Naruszenie zasady "Jedna zmiana na raz")**
+**Krok 8: Usunięcie User_ID**
+- **Problem:** Plan pomija potencjalnie wartościowe informacje związane z użytkownikiem.
+- **Alternatywa:** Utworzyć dodatkowe agregacje per użytkownik (np. średnia kwota transakcji, liczba różnych lokalizacji) przed usunięciem ID.
+- **Wpływ:** Utrata cennego kontekstu użytkownika może obniżyć jakość predykcji.
+- **Poziom ryzyka:** Średni
 
-*   **Problem:** Krok 5.2 sugeruje zastosowanie metody kwantyli (capping) do wielu kolumn jednocześnie. Chociaż metoda jest ta sama, jej wpływ na każdą zmienną może być różny. Grupowe przetwarzanie utrudnia weryfikację, czy operacja została poprawnie zastosowana do każdej z kolumn.
-*   **Sugestia:** Wykonaj operację cappingu w osobnych krokach dla każdej z kluczowych zmiennych (`Transaction_Amount`, `Account_Balance`, `Transaction_Distance`). Zapewni to pełną kontrolę i możliwość weryfikacji wyników dla każdej cechy z osobna.
+#### Faza 4: Kodowanie, obsługa wartości odstających i skalowanie
 
-Proszę o zaktualizowanie planu zgodnie z powyższymi zaleceniami, aby był bardziej modułowy, odporny na błędy i łatwiejszy do wdrożenia. Odeślij poprawioną wersję do ponownej recenzji.
+**Krok 9: Kodowanie zmiennych kategorycznych**
+- **Problem:** Jednolite zastosowanie One-Hot Encoding dla wszystkich zmiennych kategorycznych bez analizy ich kardynalności.
+- **Alternatywa:** Najpierw sprawdzić kardynalność każdej zmiennej. Dla zmiennych o wysokiej kardynalności rozważyć Target Encoding zamiast One-Hot.
+- **Wpływ:** Nieodpowiednie kodowanie może prowadzić do nadmiernej liczby cech lub utraty informacji.
+- **Poziom ryzyka:** Średni
+
+**Krok 10: Obsługa wartości odstających**
+- **Problem:** Zastosowanie Winsoryzacji na poziomie 99. percentyla dla wszystkich wymienionych kolumn bez analizy ich rzeczywistych rozkładów.
+- **Alternatywa:** Najpierw wizualizować rozkłady i dostosować poziom Winsoryzacji indywidualnie dla każdej kolumny (np. 95., 99. lub 99.9. percentyl).
+- **Wpływ:** Zbyt agresywna lub zbyt łagodna Winsoryzacja może zniekształcić dane.
+- **Poziom ryzyka:** Niski
+
+#### Ogólne uwagi
+
+**Problem:** Plan nie zawiera kroku analizy korelacji między cechami.
+- **Alternatywa:** Dodać krok analizy korelacji (np. macierz korelacji Pearsona) i usunięcia wysoce skorelowanych cech.
+- **Wpływ:** Redundantne cechy mogą prowadzić do przeuczenia modelu.
+- **Poziom ryzyka:** Średni
+
+**Problem:** Brak kroku analizy rozkładu zmiennej docelowej (Fraud_Label).
+- **Alternatywa:** Dodać krok sprawdzania balansu klas i ewentualnego planowania technik balansowania.
+- **Wpływ:** Niezbilansowane klasy mogą prowadzić do słabej wydajności modelu.
+- **Poziom ryzyka:** Wysoki
+
+Proszę zrewidować plan, uwzględniając powyższe uwagi, szczególnie rozdzielając złożone kroki na bardziej atomowe operacje.
 
 --- Komunikat od: PlannerAgent ---
-Dziękuję za cenną recenzję. Zgadzam się, że wprowadzenie większej modułowości i atomowości operacji znacząco poprawi przejrzystość, kontrolę i łatwość debugowania procesu przygotowania danych.
+**CEL:** Stworzenie zrewidowanego planu przygotowania danych, który uwzględnia wszystkie uwagi z analizy krytycznej, w celu zwiększenia jego odporności i potencjalnej skuteczności modelu.
+**ANALIZA:** Otrzymana krytyka wskazuje na kluczowe słabości pierwotnego planu: zbyt ogólne podejście do imputacji i kodowania, pominięcie potencjalnie wartościowych cech (agregacje, cechy czasowe) oraz brak fundamentalnych kroków walidacyjnych, takich jak analiza korelacji i balansu klas.
+**WNIOSEK:** Poniższy, zaktualizowany plan implementuje wszystkie sugestie, rozbijając złożone kroki na bardziej atomowe operacje i dodając nowe, kluczowe etapy analizy.
 
-Poniżej przedstawiam **nową, kompletną wersję planu**, która uwzględnia wszystkie Twoje sugestie. Zmiany zostały wyraźnie oznaczone.
+---
+### **PLAN PRZYGOTOWANIA DANYCH - WERSJA 2 (PO REWIZJI)**
 
-***
+**Faza 1: Wstępna inspekcja i walidacja**
 
-### **Plan Czyszczenia i Przygotowania Danych Transakcyjnych (Wersja 2)**
+1.  **Wczytanie danych:** Załaduj zbiór danych do struktury DataFrame biblioteki pandas.
+2.  **Weryfikacja integralności:** Wykonaj wstępną analizę za pomocą `.info()`, `.describe(include='all')` oraz `.isnull().sum()`, aby zidentyfikować podstawowe typy danych, statystyki oraz liczbę brakujących wartości w każdej kolumnie.
+3.  **[NOWY KROK] Analiza zmiennej docelowej:** Sprawdź rozkład wartości w kolumnie `Fraud_Label` za pomocą `.value_counts(normalize=True)`, aby ocenić zbalansowanie klas. Jest to kluczowe dla zadań wykrywania anomalii i wpływa na wybór metryk oceny modelu.
 
-**Cel:** Przygotowanie danych do analizy i modelowania klasyfikacyjnego w celu identyfikacji transakcji typu "fraud".
+**Faza 2: Czyszczenie i korekta typów danych**
 
-**1. Wstępna Analiza i Weryfikacja Integralności Danych**
-*   **1.1. Wczytanie danych:** Załadowanie zbioru danych do struktury DataFrame.
-*   **1.2. Podstawowe informacje:** Użycie funkcji `.info()` w celu weryfikacji wstępnych typów danych i liczby niepustych wartości w każdej kolumnie.
-*   **1.3. Statystyki opisowe:** Wygenerowanie statystyk opisowych za pomocą `.describe(include='all')` dla kolumn numerycznych i kategorycznych.
-*   **1.4. Weryfikacja duplikatów:** Sprawdzenie, czy w kolumnie `Transaction_ID` istnieją zduplikowane wartości. W przypadku znalezienia duplikatów, należy je usunąć.
+4.  **Konwersja `Timestamp`:** Przekształć kolumnę `Timestamp` z typu `object` (string) na typ `datetime`.
+5.  **[ZMIANA] Imputacja wartości numerycznych:** Uzupełnij brakujące wartości w kolumnach numerycznych (`Transaction_Amount`, `Account_Balance`, `Avg_Transaction_Amount_7d`, `Transaction_Distance`, `Risk_Score`) za pomocą mediany. Krok został wyizolowany dla większej przejrzystości.
+6.  **[ZMIANA] Imputacja wartości kategorycznych:** Uzupełnij brakujące wartości w kolumnach kategorycznych (`Device_Type`, `Location`, `Merchant_Category`, `Card_Type`, `Authentication_Method`) za pomocą najczęściej występującej wartości (mody). Krok został wyizolowany dla większej przejrzystości.
+7.  **Zarządzanie identyfikatorami:** Zidentyfikuj kolumnę `Transaction_ID` i usuń ją, ponieważ nie posiada wartości predykcyjnej. Kolumna `User_ID` zostanie tymczasowo zachowana.
 
-**2. Obsługa Brakujących Wartości (Missing Values)**
-*   **2.1. Identyfikacja:** Dokładne zliczenie brakujących wartości (`NaN`, `None`) w każdej kolumnie.
-*   **2.2. Strategia imputacji:**
-    *   **Kolumny numeryczne (`Transaction_Amount`, `Account_Balance`, `Avg_Transaction_Amount_7d`, `Transaction_Distance`, `Risk_Score`, `Card_Age`):** W przypadku niewielkiej liczby braków (<5%), zastosowanie imputacji **medianą**.
-    *   **Kolumny kategoryczne (`Location`, `Merchant_Category`, `Device_Type`, `Card_Type`, `Authentication_Method`):** W przypadku braków, zastosowanie imputacji **modą** (najczęściej występującą wartością) lub utworzenie nowej kategorii `'Unknown'`.
-    *   **Kolumny o wysokim odsetku braków:** Jeśli jakakolwiek kolumna posiada > 60% brakujących wartości, zostanie ona usunięta.
+**Faza 3: Inżynieria cech (Feature Engineering)**
 
-**3. Weryfikacja i Konwersja Typów Danych**
-*   **3.1. Konwersja kolumny `Timestamp`:** Zmiana typu danych kolumny `Timestamp` z `object` (string) na `datetime`.
-*   **3.2. Weryfikacja kolumn numerycznych:** Upewnienie się, że wszystkie kolumny, które powinny być numeryczne, mają odpowiedni typ (`float` lub `int`).
-*   **3.3. Weryfikacja kolumn binarnych:** Sprawdzenie, czy kolumny binarne (`IP_Address_Flag`, `Previous_Fraudulent_Activity`, `Is_Weekend`, `Fraud_Label`) mają typ `int` (0/1).
+8.  **Ekstrakcja cech czasowych:** Z przekonwertowanej kolumny `Timestamp` utwórz nowe cechy numeryczne: `Transaction_Hour`, `Transaction_DayOfWeek`, `Transaction_Month`.
+9.  **[NOWY KROK] Utworzenie cechy binarnej `Is_Night_Transaction`:** Na podstawie `Transaction_Hour` stwórz nową cechę binarną, która przyjmuje wartość 1 dla transakcji dokonanych w godzinach nocnych (np. między 23:00 a 5:00) i 0 w pozostałych przypadkach.
+10. **[NOWY KROK] Agregacja cech na poziomie użytkownika:** Przed usunięciem `User_ID`, stwórz nowe cechy agregujące, np. `User_Avg_Transaction_Amount` (średnia kwota transakcji dla użytkownika) lub `User_Transaction_Count` (całkowita liczba transakcji użytkownika).
+11. **Usunięcie oryginalnych kolumn:** Po ekstrakcji i agregacji cech usuń oryginalne, już niepotrzebne kolumny: `Timestamp` i `User_ID`.
 
-**4. Inżynieria Cech (Feature Engineering)**
-*   **4.1. [ZMIANA - Krok atomowy] Stworzenie cechy `Godzina_Transakcji`:** Ekstrakcja godziny (0-23) z kolumny `Timestamp`.
-*   **4.2. [ZMIANA - Krok atomowy] Stworzenie cechy `Dzien_Tygodnia`:** Ekstrakcja dnia tygodnia (0-6) z kolumny `Timestamp`.
-*   **4.3. [ZMIANA - Krok atomowy] Stworzenie cechy `Dzien_Miesiaca`:** Ekstrakcja dnia miesiąca (1-31) z kolumny `Timestamp`.
-*   **4.4. [ZMIANA - Krok atomowy] Stworzenie cechy `Stosunek_Kwoty_Do_Salda`:** Obliczenie stosunku `Transaction_Amount` do `Account_Balance`. W kroku tym zostanie zaimplementowana obsługa przypadków, gdy `Account_Balance` wynosi zero (np. przez zastąpienie wyniku wartością 0 lub bardzo dużą liczbą, aby uniknąć błędu `DivisionByZeroError`).
-*   **4.5. [ZMIANA - Krok atomowy] Stworzenie cechy `Odchylenie_Od_Sredniej_7d`:** Obliczenie różnicy `Transaction_Amount - Avg_Transaction_Amount_7d`.
-*   **4.6. [ZMIANA - Podział kodowania] Kodowanie zmiennych kategorycznych o niskiej kardynalności:** Zastosowanie **One-Hot Encoding** dla zmiennych: `Transaction_Type`, `Device_Type`, `Card_Type`, `Authentication_Method`.
-*   **4.7. [ZMIANA - Podział kodowania] Analiza i kodowanie zmiennych kategorycznych o wysokiej kardynalności:**
-    *   **4.7.1. Analiza:** Zliczenie unikalnych wartości w kolumnach `Location` i `Merchant_Category`.
-    *   **4.7.2. Redukcja kardynalności:** Jeśli liczba unikalnych wartości w którejkolwiek z tych kolumn przekracza próg (np. 15), wszystkie kategorie występujące rzadziej niż w 1% przypadków zostaną zgrupowane w jedną, nową kategorię `'Other'`.
-    *   **4.7.3. Kodowanie:** Zastosowanie **One-Hot Encoding** na przetworzonych kolumnach `Location` i `Merchant_Category`.
+**Faza 4: Kodowanie, obsługa wartości odstających i skalowanie**
 
-**5. Wykrywanie i Obsługa Wartości Odstających (Outliers)**
-*   **5.1. Identyfikacja:** Analiza dystrybucji kluczowych zmiennych numerycznych za pomocą histogramów i wykresów pudełkowych w celu wizualnego potwierdzenia obecności wartości odstających.
-*   **5.2. [ZMIANA - Krok atomowy] Obsługa wartości odstających w `Transaction_Amount`:** Zastosowanie metody kwantyli (capping). Wartości poniżej 1. percentyla i powyżej 99. percentyla zostaną zastąpione wartościami granicznymi tych percentyli.
-*   **5.3. [ZMIANA - Krok atomowy] Obsługa wartości odstających w `Account_Balance`:** Zastosowanie metody kwantyli (capping) z progami 1. i 99. percentyla.
-*   **5.4. [ZMIANA - Krok atomowy] Obsługa wartości odstających w `Transaction_Distance`:** Zastosowanie metody kwantyli (capping) z progami 1. i 99. percentyla.
+12. **[NOWY KROK] Analiza kardynalności:** Sprawdź liczbę unikalnych wartości dla każdej zmiennej kategorycznej (`Transaction_Type`, `Device_Type`, `Location`, `Merchant_Category`, `Card_Type`, `Authentication_Method`).
+13. **[ZMIANA] Kodowanie zmiennych kategorycznych:** Zastosuj metodę One-Hot Encoding dla zmiennych kategorycznych o potwierdzonej niskiej kardynalności. W przypadku zidentyfikowania zmiennych o wysokiej kardynalności, należy rozważyć alternatywne metody, np. Target Encoding.
+14. **[NOWY KROK] Analiza korelacji:** Oblicz macierz korelacji (np. Pearsona) dla wszystkich cech numerycznych. Zidentyfikuj i oznacz pary cech o wysokiej korelacji (np. |r| > 0.9), aby rozważyć usunięcie jednej z nich w celu redukcji redundancji.
+15. **[NOWY KROK] Wizualizacja rozkładów:** Stwórz wizualizacje (np. histogramy, boxploty) dla cech numerycznych podejrzewanych o posiadanie wartości odstających (`Transaction_Amount`, `Account_Balance`, `Transaction_Distance`), aby potwierdzić ich obecność i charakter.
+16. **[ZMIANA] Obsługa wartości odstających:** Na podstawie analizy wizualnej z kroku 15, zastosuj metodę Winsoryzacji, dobierając próg (np. 99. lub 99.5. percentyl) indywidualnie dla każdej kolumny, aby ograniczyć wpływ ekstremalnych wartości.
+17. **Skalowanie cech numerycznych:**
+    *   **RobustScaler:** Zastosuj `RobustScaler` dla cech z istotnymi wartościami odstającymi: `Transaction_Amount`, `Account_Balance`, `Transaction_Distance`.
+    *   **StandardScaler:** Zastosuj `StandardScaler` dla pozostałych cech numerycznych.
 
-**6. Skalowanie Danych**
-*   **6.1. Uzasadnienie:** Wiele algorytmów uczenia maszynowego jest wrażliwych na skalę cech. Skalowanie zapewnia, że wszystkie cechy mają podobny zakres, co poprawia zbieżność i wydajność modeli.
-*   **6.2. Metoda:** Zastosowanie **`StandardScaler`** (standaryzacja Z-score) na wszystkich cechach numerycznych (po obsłudze outlierów i inżynierii cech).
+**Faza 5: Finalizacja**
 
-**7. Finalizacja Zbioru Danych**
-*   **7.1. Usunięcie zbędnych kolumn:** Usunięcie oryginalnych kolumn, które zostały przetworzone lub nie będą używane w modelu, tj. `Transaction_ID`, `User_ID`, `Timestamp` oraz oryginalne kolumny kategoryczne po ich zakodowaniu.
-*   **7.2. Ostateczna weryfikacja:** Sprawdzenie finalnego kształtu zbioru danych, typów danych i braku wartości `NaN`.
-*   **7.3. Podział na zbiór treningowy i testowy:** Podział danych na zbiór treningowy i testowy (np. w proporcji 80/20) z zachowaniem proporcji klasy docelowej (`Fraud_Label`) za pomocą stratyfikacji.
+18. **Separacja zmiennej docelowej:** Oddziel zbiór cech (X) od zmiennej docelowej (y), którą jest `Fraud_Label`.
+19. **Ostateczna weryfikacja:** Sprawdź finalny zbiór cech (X) pod kątem braku wartości `NaN` oraz upewnij się, że wszystkie kolumny są numeryczne i gotowe do użycia w modelu.
 
-***
+--- Komunikat od: CriticAgent ---
+Jako Krytyk, Twoim zadaniem jest rygorystyczna analiza planu. Dla każdego kroku: 1. Zidentyfikuj potencjalne problemy i słabe punkty 2. Zaproponuj co najmniej jedną alternatywę 3. Oceń wpływ na wydajność i jakość wyników 4. Przypisz poziom ryzyka (niski/średni/wysoki) do każdego zidentyfikowanego problemu
 
-Przesyłam zaktualizowany, bardziej szczegółowy i modułowy plan do ponownej recenzji.
+### Analiza krytyczna planu - wersja 2
+
+Zrewidowany plan znacząco poprawia poprzednią wersję, rozdzielając złożone kroki na atomowe operacje i dodając istotne elementy analizy. Poniżej znajduje się ocena pozostałych punktów wymagających uwagi:
+
+#### Faza 2: Czyszczenie i korekta typów danych
+
+**Krok 5: Imputacja wartości numerycznych**
+- **Problem:** Chociaż krok został wyizolowany, wciąż stosuje jednolitą metodę imputacji (medianę) dla wszystkich kolumn numerycznych bez uwzględnienia ich specyfiki.
+- **Alternatywa:** Rozważyć różne metody imputacji dla różnych typów kolumn numerycznych, np. mediana dla `Transaction_Amount`, ale średnia krocząca dla `Avg_Transaction_Amount_7d`.
+- **Wpływ:** Bardziej kontekstowa imputacja może lepiej odzwierciedlać naturalne wzorce w danych.
+- **Poziom ryzyka:** Niski
+
+#### Faza 3: Inżynieria cech
+
+**Krok 10: Agregacja cech na poziomie użytkownika**
+- **Problem:** Plan nie precyzuje, jakie dokładnie agregacje będą tworzone i może prowadzić do nadmiernej liczby nowych cech.
+- **Alternatywa:** Zdefiniować konkretny, ograniczony zestaw agregacji (np. max 3-5) opartych na analizie biznesowej, takich jak: stosunek wartości transakcji do średniej, odchylenie standardowe kwot transakcji, różnorodność lokalizacji.
+- **Wpływ:** Zbyt wiele agregacji może prowadzić do przekleństwa wymiarowości, podczas gdy zbyt mało może pominąć istotne wzorce.
+- **Poziom ryzyka:** Średni
+
+#### Faza 4: Kodowanie, obsługa wartości odstających i skalowanie
+
+**Krok 13: Kodowanie zmiennych kategorycznych**
+- **Problem:** Plan zawiera warunkowe podejście do kodowania, co może komplikować implementację.
+- **Alternatywa:** Wyraźnie określić próg kardynalności (np. >20 unikalnych wartości) jako kryterium decyzyjne między One-Hot Encoding a Target Encoding.
+- **Wpływ:** Jasno zdefiniowane kryteria ułatwiają implementację i zapewniają konsekwencję.
+- **Poziom ryzyka:** Niski
+
+**Krok 14: Analiza korelacji**
+- **Problem:** Plan nie precyzuje co zrobić po identyfikacji skorelowanych cech.
+- **Alternatywa:** Po identyfikacji par cech o wysokiej korelacji (|r| > 0.9), dodać konkretny krok usunięcia cechy o niższej korelacji ze zmienną docelową.
+- **Wpływ:** Brak jasnej procedury selekcji cech może prowadzić do nieefektywnego wykorzystania danych.
+- **Poziom ryzyka:** Niski
+
+#### Ogólne uwagi
+
+**Problem:** Plan nie uwzględnia podziału danych na zbiory treningowy i testowy przed skalowaniem.
+- **Alternatywa:** Dodać krok podziału danych na zbiory treningowy i testowy przed fazą skalowania, aby uniknąć wycieku informacji.
+- **Wpływ:** Skalowanie całego zbioru danych przed podziałem może prowadzić do zawyżonych wyników walidacji.
+- **Poziom ryzyka:** Wysoki
+
+**Problem:** Brak planu obsługi przypadku niezbilansowanych klas wykrytych w kroku 3.
+- **Alternatywa:** Dodać warunkowy krok po analizie zmiennej docelowej, który określa strategie balansowania (np. SMOTE, class_weight) jeśli wykryto znaczącą nierównowagę klas.
+- **Wpływ:** Nieuwzględnienie nierównowagi klas może drastycznie obniżyć skuteczność modelu w wykrywaniu oszustw.
+- **Poziom ryzyka:** Wysoki
+
+Plan wymaga dalszych ulepszeń, aby adresować powyższe kwestie, zwłaszcza podział danych przed skalowaniem oraz strategię radzenia sobie z niezbilansowanymi klasami.
+
+--- Komunikat od: PlannerAgent ---
+**CEL:** Stworzenie ostatecznej, ulepszonej wersji planu przygotowania danych, która adresuje wszystkie zidentyfikowane słabości, w szczególności krytyczne kwestie wycieku danych (data leakage) i niezbalansowanych klas.
+**ANALIZA:** Druga runda krytyki wskazała na fundamentalne luki w planie, takie jak brak podziału na zbiór treningowy i testowy przed operacjami dopasowującymi (skalowanie, imputacja) oraz brak konkretnej strategii obsługi niezbalansowanej zmiennej docelowej. Te problemy mają wysoki poziom ryzyka i muszą zostać bezwzględnie naprawione. Pozostałe uwagi dotyczą dalszego uszczegółowienia i konkretyzacji kroków.
+**WNIOSEK:** Poniższy plan został gruntownie przebudowany, aby zapewnić poprawność metodologiczną i maksymalną precyzję. Wprowadzono nową fazę dedykowaną podziałowi danych i operacjom dopasowującym, aby zapobiec wyciekowi informacji.
+
+---
+### **PLAN PRZYGOTOWANIA DANYCH - WERSJA 3 (PO DRUGIEJ REWIZJI)**
+
+**Faza 1: Wstępna inspekcja i walidacja**
+
+1.  **Wczytanie danych:** Załaduj zbiór danych do struktury DataFrame biblioteki pandas.
+2.  **Weryfikacja integralności:** Wykonaj wstępną analizę za pomocą `.info()`, `.describe(include='all')` oraz `.isnull().sum()`.
+3.  **Analiza zmiennej docelowej:** Sprawdź rozkład wartości w kolumnie `Fraud_Label` za pomocą `.value_counts(normalize=True)`.
+4.  **[NOWY KROK] Planowanie strategii dla niezbalansowanych klas:** Na podstawie analizy z kroku 3, jeśli zostanie stwierdzona znacząca nierównowaga, zdefiniuj strategię do zastosowania na zbiorze treningowym w fazie modelowania (np. oversampling metodą SMOTE, lub użycie parametru `class_weight` w modelu).
+
+**Faza 2: Czyszczenie i inżynieria cech (operacje niezależne od podziału danych)**
+
+5.  **Konwersja `Timestamp`:** Przekształć kolumnę `Timestamp` na typ `datetime`.
+6.  **Zarządzanie identyfikatorami:** Usuń kolumnę `Transaction_ID`. Zachowaj `User_ID` tymczasowo.
+7.  **Ekstrakcja cech czasowych:** Z kolumny `Timestamp` utwórz cechy: `Transaction_Hour`, `Transaction_DayOfWeek`, `Transaction_Month`.
+8.  **Utworzenie cechy binarnej `Is_Night_Transaction`:** Na podstawie `Transaction_Hour` stwórz cechę binarną (1 dla transakcji między 23:00-5:00, 0 w pozostałych przypadkach).
+9.  **[ZMIANA] Agregacja cech na poziomie użytkownika:** Utwórz zdefiniowany zestaw (3-5) nowych cech agregujących, np.:
+    *   `User_Avg_Transaction_Amount` (średnia kwota transakcji użytkownika)
+    *   `User_Transaction_Count` (całkowita liczba transakcji użytkownika)
+    *   `User_Distinct_Merchant_Count` (liczba unikalnych kategorii sprzedawców dla użytkownika)
+10. **Usunięcie oryginalnych kolumn:** Usuń kolumny `Timestamp` i `User_ID`.
+11. **Analiza kardynalności:** Sprawdź liczbę unikalnych wartości dla zmiennych kategorycznych.
+12. **[ZMIANA] Kodowanie zmiennych kategorycznych:**
+    *   Zastosuj One-Hot Encoding dla zmiennych o niskiej kardynalności (np. <= 20 unikalnych wartości).
+    *   Dla zmiennych o wyższej kardynalności zastosuj Target Encoding. Decyzja oparta na progu zdefiniowanym w poprzednim punkcie.
+
+**Faza 3: Podział danych**
+
+13. **[NOWY KROK] Podział na zbiór treningowy i testowy:** Podziel dane na zbiór cech (X) i zmienną docelową (y). Następnie podziel X i y na zbiory treningowe (`X_train`, `y_train`) i testowe (`X_test`, `y_test`), aby zapobiec wyciekowi informacji w kolejnych krokach.
+
+**Faza 4: Przetwarzanie zbiorów danych (dopasowanie na `X_train`, transformacja na obu)**
+
+14. **[ZMIANA] Kontekstowa imputacja wartości:**
+    *   Dopasuj imputery (np. `SimpleImputer` z medianą) **tylko na `X_train`**.
+    *   Użyj dopasowanych imputerów do transformacji (uzupełnienia braków) zarówno w `X_train`, jak i `X_test`. Zastosuj medianę dla `Transaction_Amount` i `Account_Balance`, rozważając bardziej zaawansowane metody (np. `IterativeImputer`) dla pozostałych, jeśli prosta imputacja okaże się niewystarczająca.
+15. **Analiza korelacji:** Oblicz macierz korelacji **na `X_train`**, aby zidentyfikować wysoce skorelowane cechy (|r| > 0.9).
+16. **[NOWY KROK] Redukcja cech skorelowanych:** Na podstawie analizy z kroku 15, zidentyfikuj pary cech do usunięcia. Dla każdej pary usuń tę cechę, która ma niższą korelację ze zmienną docelową (`y_train`). Usuń te same kolumny z `X_train` i `X_test`.
+17. **Wizualizacja rozkładów:** Stwórz wizualizacje (histogramy, boxploty) dla cech numerycznych **na `X_train`**, aby potwierdzić obecność wartości odstających.
+18. **Obsługa wartości odstających:** Zastosuj Winsoryzację na zidentyfikowanych kolumnach, dopasowując progi **na podstawie rozkładu w `X_train`** i stosując je do transformacji `X_train` i `X_test`.
+19. **[ZMIANA] Skalowanie cech:**
+    *   Dopasuj skalery (`RobustScaler` dla cech z outlierami, `StandardScaler` dla pozostałych) **tylko na `X_train`**.
+    *   Użyj dopasowanych skalerów do transformacji `X_train` i `X_test`.
+
+**Faza 5: Finalizacja**
+
+20. **Ostateczna weryfikacja:** Sprawdź finalne zbiory `X_train` i `X_test` pod kątem braku wartości `NaN` oraz upewnij się, że wszystkie kolumny są numeryczne i gotowe do użycia w modelu.
 
 --- Komunikat od: CriticAgent ---
 OSTATECZNY PLAN:
-### **Plan Czyszczenia i Przygotowania Danych Transakcyjnych (Wersja 2)**
+### **PLAN PRZYGOTOWANIA DANYCH - WERSJA 3 (PO DRUGIEJ REWIZJI)**
 
-**Cel:** Przygotowanie danych do analizy i modelowania klasyfikacyjnego w celu identyfikacji transakcji typu "fraud".
+**Faza 1: Wstępna inspekcja i walidacja**
 
-**1. Wstępna Analiza i Weryfikacja Integralności Danych**
-*   **1.1. Wczytanie danych:** Załadowanie zbioru danych do struktury DataFrame.
-*   **1.2. Podstawowe informacje:** Użycie funkcji `.info()` w celu weryfikacji wstępnych typów danych i liczby niepustych wartości w każdej kolumnie.
-*   **1.3. Statystyki opisowe:** Wygenerowanie statystyk opisowych za pomocą `.describe(include='all')` dla kolumn numerycznych i kategorycznych.
-*   **1.4. Weryfikacja duplikatów:** Sprawdzenie, czy w kolumnie `Transaction_ID` istnieją zduplikowane wartości. W przypadku znalezienia duplikatów, należy je usunąć.
+1.  **Wczytanie danych:** Załaduj zbiór danych do struktury DataFrame biblioteki pandas.
+2.  **Weryfikacja integralności:** Wykonaj wstępną analizę za pomocą `.info()`, `.describe(include='all')` oraz `.isnull().sum()`.
+3.  **Analiza zmiennej docelowej:** Sprawdź rozkład wartości w kolumnie `Fraud_Label` za pomocą `.value_counts(normalize=True)`.
+4.  **[NOWY KROK] Planowanie strategii dla niezbalansowanych klas:** Na podstawie analizy z kroku 3, jeśli zostanie stwierdzona znacząca nierównowaga, zdefiniuj strategię do zastosowania na zbiorze treningowym w fazie modelowania (np. oversampling metodą SMOTE, lub użycie parametru `class_weight` w modelu).
 
-**2. Obsługa Brakujących Wartości (Missing Values)**
-*   **2.1. Identyfikacja:** Dokładne zliczenie brakujących wartości (`NaN`, `None`) w każdej kolumnie.
-*   **2.2. Strategia imputacji:**
-    *   **Kolumny numeryczne (`Transaction_Amount`, `Account_Balance`, `Avg_Transaction_Amount_7d`, `Transaction_Distance`, `Risk_Score`, `Card_Age`):** W przypadku niewielkiej liczby braków (<5%), zastosowanie imputacji **medianą**.
-    *   **Kolumny kategoryczne (`Location`, `Merchant_Category`, `Device_Type`, `Card_Type`, `Authentication_Method`):** W przypadku braków, zastosowanie imputacji **modą** (najczęściej występującą wartością) lub utworzenie nowej kategorii `'Unknown'`.
-    *   **Kolumny o wysokim odsetku braków:** Jeśli jakakolwiek kolumna posiada > 60% brakujących wartości, zostanie ona usunięta.
+**Faza 2: Czyszczenie i inżynieria cech (operacje niezależne od podziału danych)**
 
-**3. Weryfikacja i Konwersja Typów Danych**
-*   **3.1. Konwersja kolumny `Timestamp`:** Zmiana typu danych kolumny `Timestamp` z `object` (string) na `datetime`.
-*   **3.2. Weryfikacja kolumn numerycznych:** Upewnienie się, że wszystkie kolumny, które powinny być numeryczne, mają odpowiedni typ (`float` lub `int`).
-*   **3.3. Weryfikacja kolumn binarnych:** Sprawdzenie, czy kolumny binarne (`IP_Address_Flag`, `Previous_Fraudulent_Activity`, `Is_Weekend`, `Fraud_Label`) mają typ `int` (0/1).
+5.  **Konwersja `Timestamp`:** Przekształć kolumnę `Timestamp` na typ `datetime`.
+6.  **Zarządzanie identyfikatorami:** Usuń kolumnę `Transaction_ID`. Zachowaj `User_ID` tymczasowo.
+7.  **Ekstrakcja cech czasowych:** Z kolumny `Timestamp` utwórz cechy: `Transaction_Hour`, `Transaction_DayOfWeek`, `Transaction_Month`.
+8.  **Utworzenie cechy binarnej `Is_Night_Transaction`:** Na podstawie `Transaction_Hour` stwórz cechę binarną (1 dla transakcji między 23:00-5:00, 0 w pozostałych przypadkach).
+9.  **[ZMIANA] Agregacja cech na poziomie użytkownika:** Utwórz zdefiniowany zestaw (3-5) nowych cech agregujących, np.:
+    *   `User_Avg_Transaction_Amount` (średnia kwota transakcji użytkownika)
+    *   `User_Transaction_Count` (całkowita liczba transakcji użytkownika)
+    *   `User_Distinct_Merchant_Count` (liczba unikalnych kategorii sprzedawców dla użytkownika)
+10. **Usunięcie oryginalnych kolumn:** Usuń kolumny `Timestamp` i `User_ID`.
+11. **Analiza kardynalności:** Sprawdź liczbę unikalnych wartości dla zmiennych kategorycznych.
+12. **[ZMIANA] Kodowanie zmiennych kategorycznych:**
+    *   Zastosuj One-Hot Encoding dla zmiennych o niskiej kardynalności (np. <= 20 unikalnych wartości).
+    *   Dla zmiennych o wyższej kardynalności zastosuj Target Encoding. Decyzja oparta na progu zdefiniowanym w poprzednim punkcie.
 
-**4. Inżynieria Cech (Feature Engineering)**
-*   **4.1. [ZMIANA - Krok atomowy] Stworzenie cechy `Godzina_Transakcji`:** Ekstrakcja godziny (0-23) z kolumny `Timestamp`.
-*   **4.2. [ZMIANA - Krok atomowy] Stworzenie cechy `Dzien_Tygodnia`:** Ekstrakcja dnia tygodnia (0-6) z kolumny `Timestamp`.
-*   **4.3. [ZMIANA - Krok atomowy] Stworzenie cechy `Dzien_Miesiaca`:** Ekstrakcja dnia miesiąca (1-31) z kolumny `Timestamp`.
-*   **4.4. [ZMIANA - Krok atomowy] Stworzenie cechy `Stosunek_Kwoty_Do_Salda`:** Obliczenie stosunku `Transaction_Amount` do `Account_Balance`. W kroku tym zostanie zaimplementowana obsługa przypadków, gdy `Account_Balance` wynosi zero (np. przez zastąpienie wyniku wartością 0 lub bardzo dużą liczbą, aby uniknąć błędu `DivisionByZeroError`).
-*   **4.5. [ZMIANA - Krok atomowy] Stworzenie cechy `Odchylenie_Od_Sredniej_7d`:** Obliczenie różnicy `Transaction_Amount - Avg_Transaction_Amount_7d`.
-*   **4.6. [ZMIANA - Podział kodowania] Kodowanie zmiennych kategorycznych o niskiej kardynalności:** Zastosowanie **One-Hot Encoding** dla zmiennych: `Transaction_Type`, `Device_Type`, `Card_Type`, `Authentication_Method`.
-*   **4.7. [ZMIANA - Podział kodowania] Analiza i kodowanie zmiennych kategorycznych o wysokiej kardynalności:**
-    *   **4.7.1. Analiza:** Zliczenie unikalnych wartości w kolumnach `Location` i `Merchant_Category`.
-    *   **4.7.2. Redukcja kardynalności:** Jeśli liczba unikalnych wartości w którejkolwiek z tych kolumn przekracza próg (np. 15), wszystkie kategorie występujące rzadziej niż w 1% przypadków zostaną zgrupowane w jedną, nową kategorię `'Other'`.
-    *   **4.7.3. Kodowanie:** Zastosowanie **One-Hot Encoding** na przetworzonych kolumnach `Location` i `Merchant_Category`.
+**Faza 3: Podział danych**
 
-**5. Wykrywanie i Obsługa Wartości Odstających (Outliers)**
-*   **5.1. Identyfikacja:** Analiza dystrybucji kluczowych zmiennych numerycznych za pomocą histogramów i wykresów pudełkowych w celu wizualnego potwierdzenia obecności wartości odstających.
-*   **5.2. [ZMIANA - Krok atomowy] Obsługa wartości odstających w `Transaction_Amount`:** Zastosowanie metody kwantyli (capping). Wartości poniżej 1. percentyla i powyżej 99. percentyla zostaną zastąpione wartościami granicznymi tych percentyli.
-*   **5.3. [ZMIANA - Krok atomowy] Obsługa wartości odstających w `Account_Balance`:** Zastosowanie metody kwantyli (capping) z progami 1. i 99. percentyla.
-*   **5.4. [ZMIANA - Krok atomowy] Obsługa wartości odstających w `Transaction_Distance`:** Zastosowanie metody kwantyli (capping) z progami 1. i 99. percentyla.
+13. **[NOWY KROK] Podział na zbiór treningowy i testowy:** Podziel dane na zbiór cech (X) i zmienną docelową (y). Następnie podziel X i y na zbiory treningowe (`X_train`, `y_train`) i testowe (`X_test`, `y_test`), aby zapobiec wyciekowi informacji w kolejnych krokach.
 
-**6. Skalowanie Danych**
-*   **6.1. Uzasadnienie:** Wiele algorytmów uczenia maszynowego jest wrażliwych na skalę cech. Skalowanie zapewnia, że wszystkie cechy mają podobny zakres, co poprawia zbieżność i wydajność modeli.
-*   **6.2. Metoda:** Zastosowanie **`StandardScaler`** (standaryzacja Z-score) na wszystkich cechach numerycznych (po obsłudze outlierów i inżynierii cech).
+**Faza 4: Przetwarzanie zbiorów danych (dopasowanie na `X_train`, transformacja na obu)**
 
-**7. Finalizacja Zbioru Danych**
-*   **7.1. Usunięcie zbędnych kolumn:** Usunięcie oryginalnych kolumn, które zostały przetworzone lub nie będą używane w modelu, tj. `Transaction_ID`, `User_ID`, `Timestamp` oraz oryginalne kolumny kategoryczne po ich zakodowaniu.
-*   **7.2. Ostateczna weryfikacja:** Sprawdzenie finalnego kształtu zbioru danych, typów danych i braku wartości `NaN`.
-*   **7.3. Podział na zbiór treningowy i testowy:** Podział danych na zbiór treningowy i testowy (np. w proporcji 80/20) z zachowaniem proporcji klasy docelowej (`Fraud_Label`) za pomocą stratyfikacji.
+14. **[ZMIANA] Kontekstowa imputacja wartości:**
+    *   Dopasuj imputery (np. `SimpleImputer` z medianą) **tylko na `X_train`**.
+    *   Użyj dopasowanych imputerów do transformacji (uzupełnienia braków) zarówno w `X_train`, jak i `X_test`. Zastosuj medianę dla `Transaction_Amount` i `Account_Balance`, rozważając bardziej zaawansowane metody (np. `IterativeImputer`) dla pozostałych, jeśli prosta imputacja okaże się niewystarczająca.
+15. **Analiza korelacji:** Oblicz macierz korelacji **na `X_train`**, aby zidentyfikować wysoce skorelowane cechy (|r| > 0.9).
+16. **[NOWY KROK] Redukcja cech skorelowanych:** Na podstawie analizy z kroku 15, zidentyfikuj pary cech do usunięcia. Dla każdej pary usuń tę cechę, która ma niższą korelację ze zmienną docelową (`y_train`). Usuń te same kolumny z `X_train` i `X_test`.
+17. **Wizualizacja rozkładów:** Stwórz wizualizacje (histogramy, boxploty) dla cech numerycznych **na `X_train`**, aby potwierdzić obecność wartości odstających.
+18. **Obsługa wartości odstających:** Zastosuj Winsoryzację na zidentyfikowanych kolumnach, dopasowując progi **na podstawie rozkładu w `X_train`** i stosując je do transformacji `X_train` i `X_test`.
+19. **[ZMIANA] Skalowanie cech:**
+    *   Dopasuj skalery (`RobustScaler` dla cech z outlierami, `StandardScaler` dla pozostałych) **tylko na `X_train`**.
+    *   Użyj dopasowanych skalerów do transformacji `X_train` i `X_test`.
+
+**Faza 5: Finalizacja**
+
+20. **Ostateczna weryfikacja:** Sprawdź finalne zbiory `X_train` i `X_test` pod kątem braku wartości `NaN` oraz upewnij się, że wszystkie kolumny są numeryczne i gotowe do użycia w modelu.
 
 PLAN_AKCEPTOWANY_PRZEJSCIE_DO_IMPLEMENTACJI

@@ -2,75 +2,25 @@
 ### RAPORT Z META-AUDYTU SYSTEMU AI ###
 ==================================================
 
-# Raport Audytorski Systemu AI
 
-## 1. Ocena Planowania
+1.  **Ocena Planowania:**
+    Dyskusja Planner-Krytyk była efektywna i dobrze ustrukturyzowana. Planner przedstawił szczegółowy plan przetwarzania danych, który został podzielony na 5 logicznych faz (analiza wstępna, przygotowanie danych, inżynieria cech, modelowanie, finalizacja). Krytyk wykazał się rygoryzmem, wprowadzając istotne poprawki, szczególnie w zakresie obsługi wartości odstających i skalowania cech. Zwrócił uwagę na kluczowy aspekt - dopasowanie skalerów tylko na zbiorze treningowym, co jest dobrą praktyką zapobiegającą wyciekom danych. Dyskusja była merytoryczna i doprowadziła do doprecyzowania planu przed jego implementacją.
 
-Dyskusja między Plannerem a Krytykiem była częściowo efektywna, ale z istotnymi ograniczeniami:
+2.  **Ocena Wykonania:**
+    Wykonanie przebiegło sprawnie, bez konieczności uruchamiania pętli naprawczych. Debugger nie musiał interweniować, co świadczy o dobrym przygotowaniu planu i jego implementacji. Kod został napisany w sposób przejrzysty, z odpowiednimi komentarzami i obsługą błędów. Zastosowano właściwe narzędzia do przetwarzania danych (pandas, sklearn) oraz odpowiednie techniki (imputacja brakujących wartości, kodowanie zmiennych kategorycznych, skalowanie cech). Szczególnie dobrze zaimplementowano obsługę wartości odstających poprzez winsoryzację oraz zastosowano różne skalery (RobustScaler dla cech z outlierami, StandardScaler dla pozostałych). Wizualizacje wyników były czytelne i dobrze ilustrowały przeprowadzone transformacje danych.
 
-- **Pozytywne aspekty**: Plan był szczegółowy i dobrze ustrukturyzowany, z jasno określonymi krokami i uzasadnieniami.
-- **Negatywne aspekty**: W dostępnych logach nie widać faktycznej interakcji Krytyka z Plannerem - widoczny jest tylko finalny plan z oznaczeniem "PLAN_AKCEPTOWANY_PRZEJSCIE_DO_IMPLEMENTACJI".
-- **Brak rygorystyczności**: Krytyk nie wykazał się wystarczającą rygorystycznością, gdyż nie widać żadnych poprawek czy sugestii ulepszeń do planu. Brakuje widocznej iteracji i konstruktywnej krytyki.
+3.  **Ocena Jakości Promptów (Analiza Meta):**
+    Prompty były generalnie dobrze skonstruowane, ale można zidentyfikować kilka obszarów do poprawy:
 
-Wnioskuję, że albo Krytyk zaakceptował plan bez zmian (co sugeruje brak rygorystyczności), albo interakcja między agentami nie została w pełni udokumentowana w logach.
+1. W promptach zabrakło wyraźnego określenia oczekiwanego formatu wyjściowego dla wizualizacji. Chociaż wykresy zostały wygenerowane poprawnie, bardziej szczegółowe wytyczne mogłyby zapewnić lepszą interpretację wyników.
 
-## 2. Ocena Wykonania
+2. Prompt nie określał jasno, jak szczegółowo należy dokumentować kod. Chociaż kod zawierał komentarze, bardziej precyzyjne wytyczne dotyczące dokumentacji mogłyby poprawić czytelność i zrozumiałość kodu.
 
-Na podstawie dostępnych logów:
+3. W promptach zabrakło wyraźnych instrukcji dotyczących obsługi skrajnych przypadków, takich jak całkowity brak danych w niektórych kolumnach lub nietypowe rozkłady danych. Chociaż system poradził sobie z tym dobrze, jaśniejsze wytyczne mogłyby zapewnić bardziej odporną implementację.
 
-- **Brak widocznych pętli naprawczych**: W dostarczonych logach nie widać wyraźnych pętli naprawczych czy debugowania. Widoczne są tylko trzy kroki wykonania: `schema_reader`, `code_generator` i `plot_generator`.
-- **Skuteczność debuggera**: Nie można ocenić skuteczności debuggera, ponieważ w logach nie ma dowodów na jego działanie. Finalny kod wydaje się działać poprawnie, ale nie wiemy, czy wymagał debugowania.
-- **Płynność wykonania**: Proces wydaje się przebiegać płynnie od analizy schematu danych, przez generację kodu, do generacji wykresów, bez widocznych błędów wymagających naprawy.
+4.  **Rekomendacje do Samodoskonalenia:**
+    1. **Ulepszenie promptów o specyfikację formatu wyjściowego**: Dodać do promptów szczegółowe wytyczne dotyczące oczekiwanego formatu wizualizacji, w tym rodzajów wykresów, etykiet osi, kolorystyki i interpretacji wyników. Pomoże to w lepszym zrozumieniu wyników analizy przez użytkowników końcowych.
 
-## 3. Ocena Produktu
+2. **Wprowadzenie mechanizmu walidacji krzyżowej**: Zmodyfikować kod, aby uwzględniał walidację krzyżową podczas oceny jakości przetwarzania danych. Pozwoli to na bardziej rzetelną ocenę skuteczności zastosowanych transformacji i uniknięcie przeuczenia.
 
-Raport HTML jest częściowo użyteczny:
-
-- **Zalety**:
-  - Zawiera przejrzyste podsumowanie transformacji danych z konkretnymi liczbami (np. zwiększenie liczby cech o 76%)
-  - Dobrze strukturyzuje informacje w sekcje z nagłówkami
-  - Zawiera porównania "przed/po" dla kluczowych aspektów przetwarzania danych
-
-- **Ograniczenia**:
-  - Fragment raportu jest ucięty, więc nie można ocenić całości
-  - Brakuje wizualizacji (choć kod do ich generacji został utworzony)
-  - Brak szczegółowych informacji o rozkładzie klas (Fraud_Label), co jest kluczowe w zadaniach wykrywania oszustw
-
-## 4. Ocena Promptów Agentów
-
-Na podstawie analizy kodu źródłowego i logów:
-
-- **Planner**: Prompt wydaje się efektywny, gdyż wygenerował szczegółowy, dobrze ustrukturyzowany plan. Jednak brak widocznej iteracji z Krytykiem sugeruje, że prompt może nie zachęcać do współpracy.
-
-- **Krytyk**: Prompt Krytyka wydaje się niewystarczająco rygorystyczny. Brak widocznej krytyki sugeruje, że prompt może nie zawierać wystarczająco silnych instrukcji do kwestionowania planu i proponowania ulepszeń.
-
-- **Generator Kodu**: Prompt działa efektywnie - wygenerowany kod jest dobrze ustrukturyzowany, zawiera komentarze i obsługuje wszystkie kroki z planu.
-
-- **Generator Raportów**: Prompt generuje użyteczny raport, ale może brakować instrukcji dotyczących włączania wizualizacji i pełniejszej analizy rozkładu klas.
-
-**Problemy wynikające z promptów**:
-- Brak widocznej interakcji między Plannerem a Krytykiem sugeruje, że prompty mogą nie zachęcać do iteracyjnej współpracy
-- Prompt Generatora Raportów może nie kłaść wystarczającego nacisku na wizualizacje i analizę niezbalansowania klas
-
-## 5. Rekomendacje do Samodoskonalenia
-
-1. **Ulepszenie promptu Krytyka**: Dodać wyraźne instrukcje wymagające od Krytyka przedstawienia co najmniej 2-3 konkretnych sugestii ulepszeń do każdego planu, nawet jeśli plan wydaje się dobry. Przykład:
-   ```
-   Twoim zadaniem jest krytyczna analiza planu. Nawet jeśli plan wydaje się solidny, MUSISZ zaproponować co najmniej 2-3 konkretne ulepszenia lub alternatywne podejścia. Uzasadnij każdą sugestię.
-   ```
-
-2. **Modyfikacja architektury systemu**: Zaimplementować obowiązkową pętlę iteracyjną między Plannerem a Krytykiem w `langgraph_nodes.py`, wymagającą co najmniej jednej rundy poprawek przed zaakceptowaniem planu:
-   ```python
-   def should_continue(state):
-       if state.get("iteration_count", 0) < 1:  # Wymagaj co najmniej jednej iteracji
-           return "planner_revision"
-       else:
-           return "implementation"
-   ```
-
-3. **Ulepszenie promptu Generatora Raportów**: Dodać wyraźne instrukcje dotyczące włączania wizualizacji i analizy niezbalansowania klas:
-   ```
-   Raport MUSI zawierać: 1) Osadzone wizualizacje wygenerowane w kroku plot_generator, 2) Szczegółową analizę rozkładu klas docelowych z metrykami niezbalansowania, 3) Rekomendacje dotyczące technik radzenia sobie z niezbalansowaniem klas.
-   ```
-
-Te zmiany znacząco poprawią rygorystyczność procesu planowania, zapewnią bardziej iteracyjny charakter współpracy między agentami oraz zwiększą użyteczność generowanych raportów.
+3. **Rozszerzenie obsługi anomalii w danych**: Dodać do kodu bardziej zaawansowane metody wykrywania i obsługi anomalii, takie jak izolacja lasu (Isolation Forest) lub analiza głównych składowych (PCA) do wykrywania nietypowych obserwacji. Obecna implementacja opiera się głównie na prostych metodach statystycznych, które mogą nie wykryć bardziej złożonych wzorców anomalii.

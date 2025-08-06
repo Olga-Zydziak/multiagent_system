@@ -5,7 +5,7 @@ from pydantic import BaseModel, Field
 import uuid
 
 class MemoryType(str, Enum):
-    SUCCESSFUL_PLAN = "SUCCESSFUL_PLAN"
+    SUCCESSFUL_WORKFLOW = "SUCCESSFUL_WORKFLOW"
     EXECUTION_ERROR = "EXECUTION_ERROR"
     SUCCESSFUL_FIX = "SUCCESSFUL_FIX"
     META_INSIGHT = "META_INSIGHT"
@@ -39,7 +39,16 @@ class DistilledSuccessMemory(BaseModel):
     key_insight: str = Field(description="Najważniejszy wniosek lub 'trick', który przyczynił się do sukcesu tego planu.")
     full_plan_text: str = Field(description="Pełny, szczegółowy, numerowany tekst udanego planu.")
     tags: List[str] = Field(description="Lista 3-5 słów kluczowych (tagów) opisujących ten plan.")
-    
+
+class DistilledWorkflowMemory(BaseModel):
+    """Ustrukturyzowany format dla wspomnienia o UDANYM, KOMPLETNYM PROCESIE."""
+    workflow_summary: str = Field(description="Podsumowanie całego procesu w jednym zdaniu, np. 'Pomyślnie przetworzono dane, uzupełniono braki i wygenerowano raport HTML'.")
+    key_planning_insight: str = Field(description="Najważniejszy wniosek lub 'trick' z FAZY PLANOWANIA, który przyczynił się do sukcesu.")
+    key_execution_insight: str = Field(description="Najważniejsza obserwacja z FAZY WYKONANIA, np. 'Wygenerowany kod poprawnie obsłużył wartości odstające w kolumnie X'.")
+    final_outcome: str = Field(description="Zwięzły opis finalnych artefaktów, np. 'Przetworzony plik CSV i raport HTML z 2 wykresami'.")
+    tags: List[str] = Field(description="Lista 3-5 słów kluczowych opisujących cały proces.")
+
+
 class MetaInsightMemory(BaseModel):
     """Ustrukturyzowany format dla WNIOSKU NA POZIOMIE SYSTEMU."""
     observation: str = Field(description="Zwięzłe opisanie zaobserwowanego zjawiska, np. 'Agent generujący raporty często popełniał błędy w wizualizacji danych szeregów czasowych'.")

@@ -1,18 +1,31 @@
 from pydantic import BaseModel, Field
 from langchain_core.tools import tool
-#--BaseModel
+from .utils import TOOL_REGISTRY
 
-class DebugReport(BaseModel):
-    analysis: str = Field(description="Techniczna analiza błędu.")
-    corrected_code: str = Field(description="Kompletny, poprawiony kod.")
 
+# --- Schematy Odpowiedzi Agentów ---    
+class GeneratedCode(BaseModel):
+    """Przechowuje kompletny i gotowy do wykonania skrypt w Pythonie."""
+    code: str = Field(description="Kompletny, surowy kod w Pythonie, gotowy do bezpośredniego wykonania. Musi zawierać wszystkie niezbędne importy i logikę.")   
     
-class GeneratedPythonScript(BaseModel):
-    """
-    Model przechowujący kompletny i gotowy do wykonania skrypt w Pythonie.
-    """
-    script_code: str = Field(description="Kompletny kod w Pythonie, gotowy do bezpośredniego wykonania. Musi zawierać wszystkie niezbędne elementy, takie jak definicje, logikę i zapis pliku.")    
+class ReportSummary(BaseModel):
+    """Przechowuje podsumowanie analityczne w formacie HTML."""
+    summary_html: str = Field(description="Tekst podsumowania w formacie HTML, zawierający tagi takie jak <h2> i <ul>.")    
     
+class PlottingCode(BaseModel):
+    """Przechowuje kod Pythona do generowania wizualizacji."""
+    code: str = Field(description="Czysty kod w Pythonie do generowania figur matplotlib.")
+    
+
+class AuditReport(BaseModel):
+    """Przechowuje ustrukturyzowaną treść finalnego raportu z audytu."""
+    planning_evaluation: str = Field(description="Ocena fazy planowania, w tym dyskusji Planner-Krytyk.")
+    execution_evaluation: str = Field(description="Ocena fazy wykonania, w tym pętli naprawczych i skuteczności debuggera.")
+    prompt_quality_analysis: str = Field(description="Analiza meta dotycząca jakości promptów i ich wpływu na działanie systemu.")
+    recommendations: str = Field(description="Lista 1-3 konkretnych propozycji zmian w kodzie lub promptach w celu usprawnienia systemu.")    
+    
+
+# --- Schematy Narzędzi (bez zmian) ---    
 
 class CodeFixArgs(BaseModel):
     analysis: str = Field(description="Techniczna analiza przyczyny błędu i wprowadzonej poprawki w kodzie.")
@@ -21,7 +34,13 @@ class CodeFixArgs(BaseModel):
 class PackageInstallArgs(BaseModel):
     package_name: str = Field(description="Nazwa pakietu, który należy zainstalować, aby rozwiązać błąd 'ModuleNotFoundError'. Np. 'scikit-learn', 'seaborn'.")
     analysis: str = Field(description="Krótka analiza potwierdzająca, że przyczyną błędu jest brakujący pakiet.")
-    
+
+class ReportSummary(BaseModel):
+    """Przechowuje podsumowanie analityczne w formacie HTML."""
+    summary_html: str = Field(description="Tekst podsumowania w formacie HTML, zawierający tagi takie jak <h2> i <ul>.")
+
+class InspectToolArgs(BaseModel):
+    tool_name: str = Field(description="Nazwa funkcji/narzędzia do inspekcji, np. 'embed_plot_to_html'.")
     
 #narzędzia dla langchain agentów    
 @tool(args_schema=CodeFixArgs)
@@ -33,3 +52,13 @@ def propose_code_fix(analysis: str, corrected_code: str) -> None:
 def request_package_installation(package_name: str, analysis: str) -> None:
     """Użyj tego narzędzia, aby poprosić o instalację brakującej biblioteki, gdy napotkasz błąd 'ModuleNotFoundError'."""
     pass 
+
+
+@tool(args_schema=InspectToolArgs)
+def inspect_tool_code(tool_name: str) -> str:
+    """Użyj tego narzędzia, aby przeczytać kod źródłowy wewnętrznej funkcji systemowej.
+    Jest to przydatne, gdy podejrzewasz, że błąd (np. NameError) leży w narzędziu, a nie w kodzie, który analizujesz."""
+    if tool_name in TOOL_REGISTRY:
+        source_code = inspect.getsource(TOOL_REGISTRY[tool_name])
+        return f"Oto kod źródłowy narzędzia '{tool_name}':\n```python\n{source_code}\n```"
+    return f"BŁĄD: Nie znaleziono narzędzia o nazwie '{tool_name}'."

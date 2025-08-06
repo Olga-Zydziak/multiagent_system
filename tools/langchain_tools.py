@@ -1,19 +1,31 @@
 from pydantic import BaseModel, Field
 from langchain_core.tools import tool
 from .utils import TOOL_REGISTRY
-#--BaseModel
 
-class DebugReport(BaseModel):
-    analysis: str = Field(description="Techniczna analiza błędu.")
-    corrected_code: str = Field(description="Kompletny, poprawiony kod.")
 
+# --- Schematy Odpowiedzi Agentów ---    
+class GeneratedCode(BaseModel):
+    """Przechowuje kompletny i gotowy do wykonania skrypt w Pythonie."""
+    code: str = Field(description="Kompletny, surowy kod w Pythonie, gotowy do bezpośredniego wykonania. Musi zawierać wszystkie niezbędne importy i logikę.")   
     
-class GeneratedPythonScript(BaseModel):
-    """
-    Model przechowujący kompletny i gotowy do wykonania skrypt w Pythonie.
-    """
-    script_code: str = Field(description="Kompletny kod w Pythonie, gotowy do bezpośredniego wykonania. Musi zawierać wszystkie niezbędne elementy, takie jak definicje, logikę i zapis pliku.")    
+class ReportSummary(BaseModel):
+    """Przechowuje podsumowanie analityczne w formacie HTML."""
+    summary_html: str = Field(description="Tekst podsumowania w formacie HTML, zawierający tagi takie jak <h2> i <ul>.")    
     
+class PlottingCode(BaseModel):
+    """Przechowuje kod Pythona do generowania wizualizacji."""
+    code: str = Field(description="Czysty kod w Pythonie do generowania figur matplotlib.")
+    
+
+class AuditReport(BaseModel):
+    """Przechowuje ustrukturyzowaną treść finalnego raportu z audytu."""
+    planning_evaluation: str = Field(description="Ocena fazy planowania, w tym dyskusji Planner-Krytyk.")
+    execution_evaluation: str = Field(description="Ocena fazy wykonania, w tym pętli naprawczych i skuteczności debuggera.")
+    prompt_quality_analysis: str = Field(description="Analiza meta dotycząca jakości promptów i ich wpływu na działanie systemu.")
+    recommendations: str = Field(description="Lista 1-3 konkretnych propozycji zmian w kodzie lub promptach w celu usprawnienia systemu.")    
+    
+
+# --- Schematy Narzędzi (bez zmian) ---    
 
 class CodeFixArgs(BaseModel):
     analysis: str = Field(description="Techniczna analiza przyczyny błędu i wprowadzonej poprawki w kodzie.")
@@ -27,12 +39,6 @@ class ReportSummary(BaseModel):
     """Przechowuje podsumowanie analityczne w formacie HTML."""
     summary_html: str = Field(description="Tekst podsumowania w formacie HTML, zawierający tagi takie jak <h2> i <ul>.")
 
-class PlottingCode(BaseModel):
-    """Przechowuje kod Pythona do generowania wizualizacji."""
-    code: str = Field(description="Czysty kod w Pythonie do generowania figur matplotlib.")
-
-
-    
 class InspectToolArgs(BaseModel):
     tool_name: str = Field(description="Nazwa funkcji/narzędzia do inspekcji, np. 'embed_plot_to_html'.")
     
