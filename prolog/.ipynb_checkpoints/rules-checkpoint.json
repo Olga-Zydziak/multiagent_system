@@ -1,0 +1,19 @@
+{
+  "rules": [
+    {
+      "rule_id": "MUST_APOLOGIZE",
+      "prolog_condition": "not( (contains_substring(Content, 'przepraszam') ; contains_substring(Content, 'przykro nam')) )",
+      "error_message": "Odpowiedź nie zawiera przeprosin."
+    },
+    {
+      "rule_id": "NO_SPECIFIC_DATE_PROMISE",
+      "prolog_condition": "contains_substring(Content, 'będzie jutro')",
+      "error_message": "Odpowiedź obiecuje konkretną datę dostawy, co jest niedozwolone."
+    },
+    {
+      "rule_id": "MUST_OFFER_COMPENSATION",
+      "prolog_condition": "not( (contains_substring(Content, 'rabat') ; contains_substring(Content, 'kupon')) )",
+      "error_message": "Odpowiedź nie oferuje klientowi żadnej formy rekompensaty (kuponu/rabatu)."
+    }
+  ]
+}
