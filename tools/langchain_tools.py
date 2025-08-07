@@ -25,6 +25,12 @@ class AuditReport(BaseModel):
     recommendations: str = Field(description="Lista 1-3 konkretnych propozycji zmian w kodzie lub promptach w celu usprawnienia systemu.")    
     
 
+    
+class ArtefactSummary(BaseModel):
+    """Przechowuje zwięzłe podsumowanie dużego artefaktu tekstowego, takiego jak log lub kod źródłowy."""
+    summary: str = Field(description="Podsumowanie w punktach kluczowych wydarzeń, celu lub struktury oryginalnego tekstu.")    
+    
+
 # --- Schematy Narzędzi (bez zmian) ---    
 
 class CodeFixArgs(BaseModel):

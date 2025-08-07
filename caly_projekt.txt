@@ -220,9 +220,14 @@ if __name__ == "__main__":
             "human_approval", "package_installer", "human_escalation", 
             "sync_report_code","meta_auditor",
             # Nowe, wyspecjalizowane węzły raportujące:
-            "summary_analyst", "plot_generator", "report_composer","memory_consolidation"
+            "summary_analyst", "plot_generator", "report_composer","pre_audit_summarizer","memory_consolidation"
         ]
-        for name in nodes: workflow.add_node(name, globals()[f"{name}_node"])
+        for name in nodes:
+            if f"{name}_node" in globals():
+                workflow.add_node(name, globals()[f"{name}_node"])
+            else:
+                # Poprawka: Używamy poprawnej nazwy funkcji, jeśli nazwa węzła jej nie zawiera
+                workflow.add_node(name, globals()[name])
 
         # Definicja krawędzi
         workflow.set_entry_point("schema_reader")
@@ -259,14 +264,21 @@ if __name__ == "__main__":
             should_continue_or_debug,
             {"call_debugger": "universal_debugger", "request_human_help": "human_escalation", "continue": "report_composer"}
         )
+        # POPRAWKA: Używamy poprawnych kluczy ('call_debugger', 'request_human_help')
         workflow.add_conditional_edges(
-            "report_composer",
-            should_continue_or_debug,
-            {"universal_debugger": "universal_debugger", "human_escalation": "human_escalation", "continue": "meta_auditor"}
+            "report_composer", should_continue_or_debug,
+            {"call_debugger": "universal_debugger", "request_human_help": "human_escalation", "continue": "pre_audit_summarizer"}
         )
 
         # Ścieżki naprawcze
-        workflow.add_edge("human_escalation", "meta_auditor")
+        workflow.add_edge("human_escalation", "pre_audit_summarizer")
+        workflow.add_edge("pre_audit_summarizer", "meta_auditor")
+        workflow.add_edge("meta_auditor", "memory_consolidation")
+        workflow.add_edge("memory_consolidation", END)
+        
+        
+        
+        
         workflow.add_edge("package_installer", "data_code_executor")
 
         def route_after_fix(state):
@@ -293,6 +305,8 @@ if __name__ == "__main__":
 
         
         workflow.add_edge("human_escalation", "meta_auditor")
+        
+        
         workflow.add_edge("meta_auditor", "memory_consolidation")
         workflow.add_edge("memory_consolidation", END)
         
@@ -839,6 +853,24 @@ PLAN_AKCEPTOWANY_PRZEJSCIE_DO_IMPLEMENTACJI
     
     
     
+    @staticmethod
+    def for_artefact_summarizer(artefact_type: str, content: str) -> str:
+        """Prompt dla agenta, którego jedynym zadaniem jest streszczenie długiego tekstu."""
+        context = {"artefact_content": content}
+        config = PromptConfig(
+            persona="Jesteś 'Archiwistą AI', ekspertem w destylacji kluczowych informacji z długich dokumentów technicznych.",
+            task=f"Twoim jedynym zadaniem jest stworzenie zwięzłego, ale treściwego podsumowania poniższego artefaktu typu: '{artefact_type}'. Skup się na najważniejszych wydarzeniach, celach lub błędach.",
+            rules=[
+                "Podsumowanie powinno być w formie listy punktowanej.",
+                "Nie przekraczaj 250 słów.",
+                "Zachowaj kluczowe informacje, ignorując mało istotne szczegóły."
+            ],
+            output_format="Twoja odpowiedź MUSI być obiektem JSON zawierającym jeden klucz: `summary`, którego wartością jest podsumowanie jako pojedynczy string."
+        )
+        # Używamy tańszego i szybszego modelu do tego zadania
+        return PromptFactory._build_prompt(SYSTEM_PROMPT_ANALYST, config, context)
+    
+    
 class ArchitecturalRule(TypedDict):
     id: str; description: str; check: Callable[[str], bool]; error_message: str
 
@@ -888,6 +920,12 @@ class AuditReport(BaseModel):
     execution_evaluation: str = Field(description="Ocena fazy wykonania, w tym pętli naprawczych i skuteczności debuggera.")
     prompt_quality_analysis: str = Field(description="Analiza meta dotycząca jakości promptów i ich wpływu na działanie systemu.")
     recommendations: str = Field(description="Lista 1-3 konkretnych propozycji zmian w kodzie lub promptach w celu usprawnienia systemu.")    
+    
+
+    
+class ArtefactSummary(BaseModel):
+    """Przechowuje zwięzłe podsumowanie dużego artefaktu tekstowego, takiego jak log lub kod źródłowy."""
+    summary: str = Field(description="Podsumowanie w punktach kluczowych wydarzeń, celu lub struktury oryginalnego tekstu.")    
     
 
 # --- Schematy Narzędzi (bez zmian) ---    
@@ -1733,6 +1771,44 @@ def sync_report_code_node(state: AgentWorkflowState):
     return {"generated_report_code": corrected_code}   
     
     
+    
+def pre_audit_summarizer_node(state: AgentWorkflowState) -> dict:
+    """
+    Nowy węzeł, który streszcza duże artefakty PRZED przekazaniem ich do audytora.
+    Działa jak "filtr" redukujący liczbę tokenów.
+    """
+    print("\n--- WĘZEŁ: Streszczanie Artefaktów Przed Audytem ---")
+    
+    summaries = {}
+    artefacts_to_summarize = {
+        "source_code": state.get('source_code', ''),
+        "autogen_log": state.get('autogen_log', ''),
+        "langgraph_log": state.get('langgraph_log', '')
+    }
+    MAIN_AGENT = state['config']['MAIN_AGENT']
+    
+    llm = ChatVertexAI(model_name=MAIN_AGENT, temperature=0.0)
+    structured_llm = llm.with_structured_output(ArtefactSummary)
+
+    for name, content in artefacts_to_summarize.items():
+        if not content:
+            summaries[f"{name}_summary"] = "Brak danych."
+            continue
+        
+        print(f"  [INFO] Streszczanie artefaktu: {name}...")
+        try:
+            prompt = PromptFactory.for_artefact_summarizer(artefact_type=name, content=content)
+            response = structured_llm.invoke(prompt)
+            summaries[f"{name}_summary"] = response.summary
+            print(f"  [SUKCES] Ukończono streszczenie: {name}.")
+        except Exception as e:
+            print(f"  [BŁĄD] Nie udało się zestreszczyć {name}: {e}")
+            summaries[f"{name}_summary"] = "Błąd podczas streszczania."
+            
+    return summaries    
+    
+    
+
 def meta_auditor_node(state: AgentWorkflowState):
     """Uruchamia audytora ORAZ zapisuje wspomnienia o sukcesie i wnioski META."""
     print("\n" + "="*80 + "\n### ### FAZA 3: META-AUDYT I KONSOLIDACJA WIEDZY ### ###\n" + "="*80 + "\n")
@@ -1740,6 +1816,17 @@ def meta_auditor_node(state: AgentWorkflowState):
     try:
         
         CRITIC_MODEL=state['config']['CRITIC_MODEL']
+        
+        
+        source_code_summary = state.get('source_code_summary', 'Brak podsumowania kodu.')
+        autogen_log_summary = state.get('autogen_log_summary', 'Brak podsumowania logu planowania.')
+        langgraph_log_summary = state.get('langgraph_log_summary', 'Brak podsumowania logu wykonania.')
+        
+        # Pozostałe dane skracamy dla bezpieczeństwa
+        final_code = intelligent_truncate(state.get('generated_code', 'Brak kodu'), 1000)
+        
+        
+        
         
         escalation_report_content = None
         escalation_path = state.get("escalation_report_path")
@@ -1755,23 +1842,45 @@ def meta_auditor_node(state: AgentWorkflowState):
         
         # ... (cała logika generowania raportu audytora, tak jak w oryginale)
         # Załóżmy, że wynikiem jest zmienna 'audit_report'
-        final_report_content = "Brak raportu do analizy."
-        try:
-            with open(state['report_output_path'], 'r', encoding='utf-8') as f:
-                final_report_content = f.read()
-        except Exception: pass
+        
+        
+        final_report_summary = state.get("summary_html", "Brak podsumowania raportu.")
+        
+        # final_report_content = "Brak raportu do analizy."
+        # try:
+        #     with open(state['report_output_path'], 'r', encoding='utf-8') as f:
+        #         final_report_content = f.read()
+        # except Exception: pass
+        
+        
+        # Logowanie rozmiaru każdego komponentu
+        print(f"    - Rozmiar podsumowania kodu źródłowego: {len(source_code_summary)} znaków")
+        print(f"    - Rozmiar podsumowania logu AutoGen:     {len(autogen_log_summary)} znaków")
+        print(f"    - Rozmiar podsumowania logu LangGraph:  {len(langgraph_log_summary)} znaków")
+        print(f"    - Rozmiar finalnego kodu:               {len(final_code)} znaków")
+        print(f"    - Rozmiar raportu HTML:                 {len(final_report_summary)} znaków")
+        if escalation_report_content:
+            print(f"    - Rozmiar raportu eskalacji:          {len(escalation_report_content)} znaków")
+        
+        
+        
         
         llm = ChatAnthropic(model_name=CRITIC_MODEL, temperature=0.0, max_tokens=2048)
         structured_llm = llm.with_structured_output(AuditReport)
         
+        
+        
+        
         prompt = PromptFactory.for_meta_auditor(
-        source_code=intelligent_truncate(state['source_code'], 8000),
-        autogen_log=intelligent_truncate(state['autogen_log'], 6000),
-        langgraph_log=intelligent_truncate(state.get('langgraph_log', ''), 6000),
-        final_code=state.get('generated_code', 'Brak kodu'),
-        final_report=final_report_content,
-        escalation_report=escalation_report_content
+            source_code=source_code_summary,
+            autogen_log=autogen_log_summary,
+            langgraph_log=langgraph_log_summary,
+            final_code=final_code,
+            final_report=final_report_summary,
+            escalation_report=escalation_report_content
         )
+        
+        print(f"  [AUDYT-DIAGNOSTYKA] Całkowity rozmiar promptu wysyłanego do audytora: {len(prompt)} znaków")
         report_object = structured_llm.invoke(prompt)
         # ... (zapis raportu do pliku)
 
@@ -1806,7 +1915,15 @@ def meta_auditor_node(state: AgentWorkflowState):
         return {"meta_insight_content": meta_insight_content}
 
     except Exception as e:
-        print(f"BŁĄD KRYTYCZNY podczas meta-audytu: {e}")
+        # ZMIANA: Bardziej szczegółowa obsługa błędu
+        error_message = f"BŁĄD KRYTYCZNY podczas meta-audytu: {e}"
+        print(error_message)
+        # Dodatkowy log, jeśli błąd dotyczy długości promptu
+        if "prompt is too long" in str(e) or "rate_limit_error" in str(e):
+            print("\n  [DIAGNOZA] Błąd wskazuje na przekroczenie limitu tokenów. Sprawdź powyższe rozmiary "
+                  "poszczególnych komponentów, aby zidentyfikować źródło problemu. "
+                  "Prawdopodobnie węzeł 'pre_audit_summarizer_node' nie zredukował wystarczająco danych.")
+        
         return {"meta_insight_content": None}
 
     
@@ -2213,7 +2330,16 @@ class DistilledSuccessMemory(BaseModel):
     key_insight: str = Field(description="Najważniejszy wniosek lub 'trick', który przyczynił się do sukcesu tego planu.")
     full_plan_text: str = Field(description="Pełny, szczegółowy, numerowany tekst udanego planu.")
     tags: List[str] = Field(description="Lista 3-5 słów kluczowych (tagów) opisujących ten plan.")
-    
+
+class DistilledWorkflowMemory(BaseModel):
+    """Ustrukturyzowany format dla wspomnienia o UDANYM, KOMPLETNYM PROCESIE."""
+    workflow_summary: str = Field(description="Podsumowanie całego procesu w jednym zdaniu, np. 'Pomyślnie przetworzono dane, uzupełniono braki i wygenerowano raport HTML'.")
+    key_planning_insight: str = Field(description="Najważniejszy wniosek lub 'trick' z FAZY PLANOWANIA, który przyczynił się do sukcesu.")
+    key_execution_insight: str = Field(description="Najważniejsza obserwacja z FAZY WYKONANIA, np. 'Wygenerowany kod poprawnie obsłużył wartości odstające w kolumnie X'.")
+    final_outcome: str = Field(description="Zwięzły opis finalnych artefaktów, np. 'Przetworzony plik CSV i raport HTML z 2 wykresami'.")
+    tags: List[str] = Field(description="Lista 3-5 słów kluczowych opisujących cały proces.")
+
+
 class MetaInsightMemory(BaseModel):
     """Ustrukturyzowany format dla WNIOSKU NA POZIOMIE SYSTEMU."""
     observation: str = Field(description="Zwięzłe opisanie zaobserwowanego zjawiska, np. 'Agent generujący raporty często popełniał błędy w wizualizacji danych szeregów czasowych'.")

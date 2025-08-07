@@ -230,6 +230,24 @@ PLAN_AKCEPTOWANY_PRZEJSCIE_DO_IMPLEMENTACJI
     
     
     
+    @staticmethod
+    def for_artefact_summarizer(artefact_type: str, content: str) -> str:
+        """Prompt dla agenta, którego jedynym zadaniem jest streszczenie długiego tekstu."""
+        context = {"artefact_content": content}
+        config = PromptConfig(
+            persona="Jesteś 'Archiwistą AI', ekspertem w destylacji kluczowych informacji z długich dokumentów technicznych.",
+            task=f"Twoim jedynym zadaniem jest stworzenie zwięzłego, ale treściwego podsumowania poniższego artefaktu typu: '{artefact_type}'. Skup się na najważniejszych wydarzeniach, celach lub błędach.",
+            rules=[
+                "Podsumowanie powinno być w formie listy punktowanej.",
+                "Nie przekraczaj 250 słów.",
+                "Zachowaj kluczowe informacje, ignorując mało istotne szczegóły."
+            ],
+            output_format="Twoja odpowiedź MUSI być obiektem JSON zawierającym jeden klucz: `summary`, którego wartością jest podsumowanie jako pojedynczy string."
+        )
+        # Używamy tańszego i szybszego modelu do tego zadania
+        return PromptFactory._build_prompt(SYSTEM_PROMPT_ANALYST, config, context)
+    
+    
 class ArchitecturalRule(TypedDict):
     id: str; description: str; check: Callable[[str], bool]; error_message: str
 

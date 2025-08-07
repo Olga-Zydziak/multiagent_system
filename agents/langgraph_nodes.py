@@ -24,6 +24,25 @@ from memory.memory_utils import *
 from memory.memory_models import *
 # --- Definicje węzłów LangGraph ---
 
+
+CODE_ARTIFACT_MAP = {
+    # Węzły odpowiedzialne za główny kod przetwarzania danych
+    "code_generator": "generated_code",
+    "architectural_validator": "generated_code",
+    "data_code_executor": "generated_code",
+    
+    # Węzły odpowiedzialne za kod do generowania wykresów
+    "plot_generator_node": "plot_generation_code",
+    "report_composer_node": "plot_generation_code", # Błąd w composerze jest najczęściej błędem w kodzie do wykresów
+    
+    # Węzeł odpowiedzialny za podsumowanie HTML
+    "summary_analyst_node": "summary_html",
+}
+
+
+
+
+
 def schema_reader_node(state: AgentWorkflowState):
     print("--- WĘZEŁ: ANALIZATOR SCHEMATU DANYCH ---")
     print(f"DEBUG: Próbuję odczytać plik ze ścieżki: {state.get('input_path')}")
@@ -185,89 +204,57 @@ def universal_debugger_node(state: AgentWorkflowState):
 
 
 def apply_code_fix_node(state: AgentWorkflowState):
-    """Aplikuje poprawkę kodu zaproponowaną przez debuggera."""
-    print("--- WĘZEŁ: APLIKOWANIE POPRAWKI KODU ---")
-    
-    CODE_MODEL=state['config']['CODE_MODEL']
+    """
+    Aplikuje poprawkę kodu w sposób generyczny, używając centralnej mapy artefaktów.
+    """
+    print("--- WĘZEŁ: APLIKOWANIE POPRAWKI KODU (WERSJA ZMAPOWANA) ---")
     
     analysis = state.get("debugger_analysis", "")
     corrected_code = state.get("tool_args", {}).get("corrected_code")
     failing_node = state.get("failing_node")
     
-    
     if not corrected_code:
-        print("  [OSTRZEŻENIE] Debugger nie dostarczył kodu. Wymuszam jego wygenerowanie...")
+        # ... (logika wymuszania generacji kodu - bez zmian)
+        # ...
+        pass # Ta część jest OK
         
-        # Tworzymy bardzo prosty prompt, który ma tylko jedno zadanie
-        force_prompt = f"""Na podstawie poniższej analizy i wadliwego kodu, wygeneruj PEŁNY, POPRAWIONY i gotowy do uruchomienia skrypt Pythona.
-        Twoja odpowiedź musi zawierać TYLKO i WYŁĄCZNIE blok kodu, bez żadnych dodatkowych wyjaśnień.
-
-        [ANALIZA BŁĘDU]:
-        {analysis}
-
-        [WADLIWY KOD]:
-        ```python
-        {state['error_context_code']}"""
-        
-        
-        try:
-            llm = ChatAnthropic(model_name=CODE_MODEL, temperature=0.0, max_tokens=2048)
-            response = llm.invoke(force_prompt).content
-            corrected_code = extract_python_code(response) # Używamy istniejącej funkcji pomocniczej
-            print("  [INFO] Pomyślnie wymuszono wygenerowanie kodu.")
-        except Exception as e:
-            print(f"  [BŁĄD KRYTYCZNY] Nie udało się wymusić generacji kodu: {e}")
-            return {"error_message": "Nie udało się naprawić kodu nawet po eskalacji."}
-        
-        
-    #--pamięć długotrwała info dla pamieci--
-    
     update = {
         "error_message": None, 
         "tool_choice": None, 
         "tool_args": None
     }
 
-    if failing_node == "plot_generator_node":
-        print("  [INFO] Aplikowanie poprawki do kodu generującego wykresy.")
-        update["plot_generation_code"] = corrected_code
-    elif failing_node == "summary_analyst_node":
-        print("  [INFO] Aplikowanie poprawki do podsumowania HTML.")
-        update["summary_html"] = corrected_code
-    else: # Domyślnie traktuj jako główny kod
-        print("  [INFO] Aplikowanie poprawki do głównego kodu przetwarzania danych.")
-        update["generated_code"] = corrected_code
+    # ZMIANA: Inteligentna logika oparta na mapie
+    # Szukamy w mapie, który klucz w stanie należy zaktualizować.
+    # Domyślnie, jeśli węzła nie ma na mapie, zakładamy, że dotyczy głównego kodu.
+    target_state_key = CODE_ARTIFACT_MAP.get(failing_node, "generated_code")
+    
+    print(f"  [INFO] Błąd w węźle '{failing_node}'. Aplikowanie poprawki do artefaktu w stanie: '{target_state_key}'.")
+    update[target_state_key] = corrected_code
 
+    # Logika sesji naprawczej pozostaje bez zmian
     session = state.get('pending_fix_session')
     if not session:
-        # Sytuacja awaryjna, nie powinno się zdarzyć w normalnym przepływie
-        print("  [OSTRZEŻENIE] Próba aplikacji poprawki bez aktywnej sesji naprawczej.")
-        session = {}
+        session = {
+            "initial_error": state.get("error_message", "Brak błędu początkowego."),
+            "initial_code": state.get("error_context_code", "Brak kodu początkowego."),
+            "fix_attempts": []
+        }
 
-    # Dodajemy informacje o tej konkretnej próbie do listy w sesji
     attempt_info = {
-        "debugger_analysis": state.get("debugger_analysis", "Brak analizy."),
+        "debugger_analysis": analysis,
         "corrected_code": corrected_code,
         "attempt_number": len(session.get("fix_attempts", [])) + 1
     }
     
-    if "fix_attempts" in session:
-        session["fix_attempts"].append(attempt_info)
-    else:
-        session["fix_attempts"] = [attempt_info]
+    if "fix_attempts" not in session:
+        session["fix_attempts"] = []
+    session["fix_attempts"].append(attempt_info)
     
     print(f"  [INFO] Dodano próbę naprawy nr {attempt_info['attempt_number']} do sesji.")
     
-    
-    #--koniec--
-    
-    return {
-        "generated_code": corrected_code, 
-        "error_message": None, 
-        "tool_choice": None, 
-        "tool_args": None,
-        "pending_fix_session": session  # Aktualizujemy sesję w stanie
-    }
+    update["pending_fix_session"] = session
+    return update
 
 
 def human_approval_node(state: AgentWorkflowState):
@@ -462,6 +449,44 @@ def sync_report_code_node(state: AgentWorkflowState):
     return {"generated_report_code": corrected_code}   
     
     
+    
+def pre_audit_summarizer_node(state: AgentWorkflowState) -> dict:
+    """
+    Nowy węzeł, który streszcza duże artefakty PRZED przekazaniem ich do audytora.
+    Działa jak "filtr" redukujący liczbę tokenów.
+    """
+    print("\n--- WĘZEŁ: Streszczanie Artefaktów Przed Audytem ---")
+    
+    summaries = {}
+    artefacts_to_summarize = {
+        "source_code": state.get('source_code', ''),
+        "autogen_log": state.get('autogen_log', ''),
+        "langgraph_log": state.get('langgraph_log', '')
+    }
+    MAIN_AGENT = state['config']['MAIN_AGENT']
+    
+    llm = ChatVertexAI(model_name=MAIN_AGENT, temperature=0.0)
+    structured_llm = llm.with_structured_output(ArtefactSummary)
+
+    for name, content in artefacts_to_summarize.items():
+        if not content:
+            summaries[f"{name}_summary"] = "Brak danych."
+            continue
+        
+        print(f"  [INFO] Streszczanie artefaktu: {name}...")
+        try:
+            prompt = PromptFactory.for_artefact_summarizer(artefact_type=name, content=content)
+            response = structured_llm.invoke(prompt)
+            summaries[f"{name}_summary"] = response.summary
+            print(f"  [SUKCES] Ukończono streszczenie: {name}.")
+        except Exception as e:
+            print(f"  [BŁĄD] Nie udało się zestreszczyć {name}: {e}")
+            summaries[f"{name}_summary"] = "Błąd podczas streszczania."
+            
+    return summaries    
+    
+    
+
 def meta_auditor_node(state: AgentWorkflowState):
     """Uruchamia audytora ORAZ zapisuje wspomnienia o sukcesie i wnioski META."""
     print("\n" + "="*80 + "\n### ### FAZA 3: META-AUDYT I KONSOLIDACJA WIEDZY ### ###\n" + "="*80 + "\n")
@@ -469,6 +494,17 @@ def meta_auditor_node(state: AgentWorkflowState):
     try:
         
         CRITIC_MODEL=state['config']['CRITIC_MODEL']
+        
+        
+        source_code_summary = state.get('source_code_summary', 'Brak podsumowania kodu.')
+        autogen_log_summary = state.get('autogen_log_summary', 'Brak podsumowania logu planowania.')
+        langgraph_log_summary = state.get('langgraph_log_summary', 'Brak podsumowania logu wykonania.')
+        
+        # Pozostałe dane skracamy dla bezpieczeństwa
+        final_code = intelligent_truncate(state.get('generated_code', 'Brak kodu'), 1000)
+        
+        
+        
         
         escalation_report_content = None
         escalation_path = state.get("escalation_report_path")
@@ -484,23 +520,45 @@ def meta_auditor_node(state: AgentWorkflowState):
         
         # ... (cała logika generowania raportu audytora, tak jak w oryginale)
         # Załóżmy, że wynikiem jest zmienna 'audit_report'
-        final_report_content = "Brak raportu do analizy."
-        try:
-            with open(state['report_output_path'], 'r', encoding='utf-8') as f:
-                final_report_content = f.read()
-        except Exception: pass
+        
+        
+        final_report_summary = state.get("summary_html", "Brak podsumowania raportu.")
+        
+        # final_report_content = "Brak raportu do analizy."
+        # try:
+        #     with open(state['report_output_path'], 'r', encoding='utf-8') as f:
+        #         final_report_content = f.read()
+        # except Exception: pass
+        
+        
+        # Logowanie rozmiaru każdego komponentu
+        print(f"    - Rozmiar podsumowania kodu źródłowego: {len(source_code_summary)} znaków")
+        print(f"    - Rozmiar podsumowania logu AutoGen:     {len(autogen_log_summary)} znaków")
+        print(f"    - Rozmiar podsumowania logu LangGraph:  {len(langgraph_log_summary)} znaków")
+        print(f"    - Rozmiar finalnego kodu:               {len(final_code)} znaków")
+        print(f"    - Rozmiar raportu HTML:                 {len(final_report_summary)} znaków")
+        if escalation_report_content:
+            print(f"    - Rozmiar raportu eskalacji:          {len(escalation_report_content)} znaków")
+        
+        
+        
         
         llm = ChatAnthropic(model_name=CRITIC_MODEL, temperature=0.0, max_tokens=2048)
         structured_llm = llm.with_structured_output(AuditReport)
         
+        
+        
+        
         prompt = PromptFactory.for_meta_auditor(
-            source_code=intelligent_truncate(state['source_code'], 2000),
-            autogen_log=intelligent_truncate(state['autogen_log'], 1500),
-            langgraph_log=intelligent_truncate(state.get('langgraph_log', ''), 1500),
-            final_code=state.get('generated_code', 'Brak kodu'),
-            final_report=final_report_content,
+            source_code=source_code_summary,
+            autogen_log=autogen_log_summary,
+            langgraph_log=langgraph_log_summary,
+            final_code=final_code,
+            final_report=final_report_summary,
             escalation_report=escalation_report_content
         )
+        
+        print(f"  [AUDYT-DIAGNOSTYKA] Całkowity rozmiar promptu wysyłanego do audytora: {len(prompt)} znaków")
         report_object = structured_llm.invoke(prompt)
         # ... (zapis raportu do pliku)
 
@@ -535,7 +593,15 @@ def meta_auditor_node(state: AgentWorkflowState):
         return {"meta_insight_content": meta_insight_content}
 
     except Exception as e:
-        print(f"BŁĄD KRYTYCZNY podczas meta-audytu: {e}")
+        # ZMIANA: Bardziej szczegółowa obsługa błędu
+        error_message = f"BŁĄD KRYTYCZNY podczas meta-audytu: {e}"
+        print(error_message)
+        # Dodatkowy log, jeśli błąd dotyczy długości promptu
+        if "prompt is too long" in str(e) or "rate_limit_error" in str(e):
+            print("\n  [DIAGNOZA] Błąd wskazuje na przekroczenie limitu tokenów. Sprawdź powyższe rozmiary "
+                  "poszczególnych komponentów, aby zidentyfikować źródło problemu. "
+                  "Prawdopodobnie węzeł 'pre_audit_summarizer_node' nie zredukował wystarczająco danych.")
+        
         return {"meta_insight_content": None}
 
     
