@@ -87,7 +87,7 @@ def code_generator_node(state: AgentWorkflowState):
         print(code)
         print("--------------------------------------------------")
         
-        return {"generated_code": code}
+        return {"generated_code": code,"active_code_key": "generated_code" }
 
     except Exception as e:
         # Dodajemy obsługę błędu, aby dać więcej kontekstu, jeśli coś pójdzie nie tak.
@@ -167,6 +167,7 @@ def data_code_executor_node(state: AgentWorkflowState):
             "failing_node": "data_code_executor", 
             "error_message": error_traceback, 
             "error_context_code": state['generated_code'], 
+            "active_code_key": "generated_code",
             "correction_attempts": state.get('correction_attempts', 0) + 1,
             "pending_fix_session": pending_session
         }
@@ -209,52 +210,44 @@ def apply_code_fix_node(state: AgentWorkflowState):
     """
     print("--- WĘZEŁ: APLIKOWANIE POPRAWKI KODU (WERSJA ZMAPOWANA) ---")
     
-    analysis = state.get("debugger_analysis", "")
     corrected_code = state.get("tool_args", {}).get("corrected_code")
-    failing_node = state.get("failing_node")
-    
+    key_to_update = state.get("active_code_key")
+
     if not corrected_code:
-        # ... (logika wymuszania generacji kodu - bez zmian)
-        # ...
-        pass # Ta część jest OK
+        print("  [OSTRZEŻENIE] Debugger nie dostarczył kodu. Eskalacja.")
+        return {"error_message": "Debugger nie był w stanie wygenerować poprawki."}
+
+    if not key_to_update:
+        print("  [BŁĄD KRYTYCZNY] Nie można zaaplikować poprawki: brak 'active_code_key' w stanie. Eskalacja.")
+        return {"error_message": "Błąd wewnętrzny: brak kontekstu do aplikacji poprawki."}
+
+    print(f"  [INFO] Aplikowanie poprawki do klucza stanu: '{key_to_update}'")
+
         
-    update = {
-        "error_message": None, 
-        "tool_choice": None, 
-        "tool_args": None
+    update_payload = {
+        key_to_update: corrected_code,
+        "error_message": None,
+        "tool_choice": None,
+        "tool_args": None,
+        "debugger_analysis": None
     }
-
-    # ZMIANA: Inteligentna logika oparta na mapie
-    # Szukamy w mapie, który klucz w stanie należy zaktualizować.
-    # Domyślnie, jeśli węzła nie ma na mapie, zakładamy, że dotyczy głównego kodu.
-    target_state_key = CODE_ARTIFACT_MAP.get(failing_node, "generated_code")
-    
-    print(f"  [INFO] Błąd w węźle '{failing_node}'. Aplikowanie poprawki do artefaktu w stanie: '{target_state_key}'.")
-    update[target_state_key] = corrected_code
-
-    # Logika sesji naprawczej pozostaje bez zmian
+    update_payload['failing_node'] = state.get('failing_node')
     session = state.get('pending_fix_session')
     if not session:
-        session = {
-            "initial_error": state.get("error_message", "Brak błędu początkowego."),
-            "initial_code": state.get("error_context_code", "Brak kodu początkowego."),
-            "fix_attempts": []
-        }
+        session = {}
 
     attempt_info = {
-        "debugger_analysis": analysis,
+        "debugger_analysis": state.get("debugger_analysis", "Brak analizy."),
         "corrected_code": corrected_code,
         "attempt_number": len(session.get("fix_attempts", [])) + 1
     }
     
-    if "fix_attempts" not in session:
-        session["fix_attempts"] = []
-    session["fix_attempts"].append(attempt_info)
-    
-    print(f"  [INFO] Dodano próbę naprawy nr {attempt_info['attempt_number']} do sesji.")
-    
-    update["pending_fix_session"] = session
-    return update
+    if "fix_attempts" in session:
+        session["fix_attempts"].append(attempt_info)
+    else:
+        session["fix_attempts"] = [attempt_info]
+    update_payload["pending_fix_session"] = session
+    return update_payload
 
 
 def human_approval_node(state: AgentWorkflowState):
@@ -350,7 +343,7 @@ def plot_generator_node(state: AgentWorkflowState) -> Dict[str, str]:
         cleaned_code = extract_python_code(response.code)
         
         print("  [INFO] Generator stworzył kod do wizualizacji.")
-        return {"plot_generation_code": cleaned_code}
+        return {"plot_generation_code": cleaned_code,"active_code_key": "plot_generation_code"}
         
 
     except Exception as e:
@@ -434,6 +427,7 @@ def report_composer_node(state: AgentWorkflowState) -> Dict[str, Any]:
             "error_message": error_msg, 
             "failing_node": "report_composer_node",
             "error_context_code": state.get("plot_generation_code", "Brak kodu do analizy."),
+            "active_code_key": "plot_generation_code",
             "correction_attempts": state.get("correction_attempts", 0) + 1
         }
     
